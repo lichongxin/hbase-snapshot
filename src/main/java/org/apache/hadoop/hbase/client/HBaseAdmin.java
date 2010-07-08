@@ -883,6 +883,51 @@ public class HBaseAdmin {
       throw RemoteExceptionHandler.decodeRemoteException(e);
     }
   }
+  
+  /**
+   * Create a snapshot for the given table.
+   * Asynchronous operation?
+   * 
+   * @param snapshotName name of the snapshot to be created
+   * @param tableName name of the table for which snapshot is created
+   * @throws IOException if a remote or network exception occurs 
+   */
+  public void snapshot(final byte[] snapshotName, final byte[] tableName)
+      throws IOException {
+    // TODO
+  }
+  
+  /**
+   * Restore a snapshot.
+   * 
+   * @param snapshotName name of the snapshot
+   * @throws IOException if a remote or network exception occurs 
+   */
+  public void restoreSnapshot(final byte[] snapshotName) throws IOException {
+    // TODO  
+  }
+  
+  /**
+   * Restore a snapshot to a new table name.
+   * 
+   * @param snapshotName name of the snapshot
+   * @param newTableName name of the new table
+   * @throws IOException if a remote or network exception occurs
+   */
+  public void restoreSnapshot(final byte[] snapshotName, 
+      final byte[] newTableName) throws IOException {
+    // TODO
+  }
+  
+  /**
+   * Delete an existing snapshot.
+   * 
+   * @param snapshotName name of the snapshot
+   * @throws IOException if a remote or network exception occurs 
+   */
+  public void deleteSnapshot(final byte[] snapshotName) throws IOException {
+    // TODO
+  }
 
   /**
    * Shuts down the HBase instance

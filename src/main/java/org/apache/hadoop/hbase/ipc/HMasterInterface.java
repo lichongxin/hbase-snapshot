@@ -118,6 +118,32 @@ public interface HMasterInterface extends HBaseRPCProtocolVersion {
     throws IOException;
 
   /**
+   * Create a snapshot for the given table.
+   * 
+   * @param snapshotName name of the snapshot
+   * @param tableName table to snapshot
+   * @throws IOException
+   */
+  public void snapshot(final byte[] snapshotName, final byte[] tableName)
+    throws IOException;
+  
+  /**
+   * Restore a snapshot.
+   * 
+   * @param snapshotName snapshot to restore
+   * @throws IOException
+   */
+  public void restoreSnapshot(final byte[] snapshotName) throws IOException;
+  
+  /**
+   * Delete an existing snapshot.
+   * 
+   * @param snapshotName snapshot to delete
+   * @throws IOException
+   */
+  public void deleteSnapshot(final byte[] snapshotName) throws IOException;
+  
+  /**
    * Shutdown an HBase cluster.
    * @throws IOException e
    */

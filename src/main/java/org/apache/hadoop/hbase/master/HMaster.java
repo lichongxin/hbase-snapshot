@@ -60,6 +60,7 @@ import org.apache.hadoop.hbase.MasterNotRunningException;
 import org.apache.hadoop.hbase.MiniZooKeeperCluster;
 import org.apache.hadoop.hbase.RemoteExceptionHandler;
 import org.apache.hadoop.hbase.TableExistsException;
+import org.apache.hadoop.hbase.TablePartialOpenException;
 import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.HBaseAdmin;
 import org.apache.hadoop.hbase.client.Result;
@@ -863,6 +864,29 @@ public class HMaster extends Thread implements HMasterInterface,
       throw new IOException("Can't disable root table");
     }
     new ChangeTableState(this, tableName, false).process();
+  }
+
+  public void snapshot(final byte[] snapshotName, final byte[] tableName)
+    throws IOException {
+    // TODO
+    if (connection.isTableDisabled(tableName)) {
+      
+    } else if (connection.isTableDisabled(tableName)) {
+      
+    } else {
+      LOG.debug("Snapshot can not be created on partial open table " + Bytes.toString(tableName));
+      throw new TablePartialOpenException(tableName);
+    }
+  }
+
+  //snapshot operations
+  
+  public void restoreSnapshot(final byte[] snapshotName) throws IOException {
+    // TODO
+  }
+  
+  public void deleteSnapshot(final byte[] snapshotName) throws IOException {
+    // TODO
   }
 
   /**

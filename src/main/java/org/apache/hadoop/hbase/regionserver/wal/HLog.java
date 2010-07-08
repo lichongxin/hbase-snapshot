@@ -1072,6 +1072,19 @@ public class HLog implements Syncable {
   int getNumLogFiles() {
     return outputfiles.size();
   }
+  
+  /**
+   * @return a sorted map containing all the current files and corresponding
+   *         sequence number
+   */
+  public SortedMap<Long, Path> getCurrentLogFiles() {
+    SortedMap<Long, Path> files = new TreeMap<Long, Path>();
+    synchronized (this.updateLock) {
+      files.putAll(outputfiles);
+      files.put(Long.valueOf(this.logSeqNum.get() - 1), computeFilename());
+    }
+    return files;
+  }
 
   /**
    * By acquiring a log sequence ID, we can allow log messages to continue while

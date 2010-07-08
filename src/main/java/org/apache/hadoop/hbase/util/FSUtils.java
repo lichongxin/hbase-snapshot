@@ -43,6 +43,7 @@ import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -644,4 +645,11 @@ public class FSUtils {
     LOG.info("Finished lease recover attempt for " + p);
   }
 
+  public static void archiveFiles(final FileSystem fs, List<Path> filesToArchive, final Path archiveDir) {
+    
+  }
+  
+  public static void createFileReference(final FileSystem fs, final Path oringinFile, final Path dstDir) {
+    
+  }
 }

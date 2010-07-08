@@ -57,10 +57,36 @@ public class Reference implements Writable {
    * the upper half of the key range
    */
   public static enum Range {
-    /** HStoreFile contains upper half of key range */
-    top,
-    /** HStoreFile contains lower half of key range */
-    bottom
+    /** StoreFile contains the entire key range */
+    entire    (0),
+    /** StoreFile contains upper half of key range */
+    top       (1),
+    /** StoreFile contains lower half of key range */
+    bottom    (2);
+    
+    private final byte value;
+    
+    private Range(final int intValue) {
+      this.value = (byte)intValue;
+    }
+    
+    public byte getByteValue() {
+      return value;
+    }
+    
+    public static Range fromByte(byte value) {
+      switch(value) {
+      case 0:
+        return Range.entire;
+      case 1:
+        return Range.top;
+      case 2:
+        return Range.bottom;
+        
+      default:
+          throw new RuntimeException("Invalid byte value for Reference.Range");
+      }
+    }
   }
 
   /**
@@ -107,15 +133,13 @@ public class Reference implements Writable {
   // Make it serializable.
 
   public void write(DataOutput out) throws IOException {
-    // Write true if we're doing top of the file.
-    out.writeBoolean(isTopFileRegion(this.region));
+    // Write the byte value of the range
+    out.write(region.getByteValue());
     Bytes.writeByteArray(out, this.splitkey);
   }
 
   public void readFields(DataInput in) throws IOException {
-    boolean tmp = in.readBoolean();
-    // If true, set region to top.
-    this.region = tmp? Range.top: Range.bottom;
+    this.region = Range.fromByte(in.readByte());
     this.splitkey = Bytes.readByteArray(in);
   }
 

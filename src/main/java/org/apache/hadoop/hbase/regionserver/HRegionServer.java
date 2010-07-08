@@ -64,6 +64,7 @@ import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.HServerAddress;
 import org.apache.hadoop.hbase.HServerInfo;
 import org.apache.hadoop.hbase.HServerLoad;
+import org.apache.hadoop.hbase.HSnapshotDescriptor;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.LeaseListener;
@@ -2056,6 +2057,31 @@ public class HRegionServer implements HRegionInterface,
     HRegion region = getRegion(regionName);
     region.bulkLoadHFile(hfilePath, familyName);
   }
+  
+  public boolean createSnapshot(HSnapshotDescriptor snapshotInfo) throws IOException{
+    Path snapshotDir = new Path(new Path(rootDir, HConstants.SNAPSHOT_DIR), Bytes.toString(snapshotInfo.getSnapshotName()));
+    SortedMap<Long, Path> logFiles = hlog.getCurrentLogFiles();
+    // dump the log file list
+    dumpLogList(logFiles, snapshotDir);
+    
+    String snapshotTable = snapshotInfo.getTableNameAsString();
+    for(HRegion region : onlineRegions.values()) {
+      String tableName = region.getTableDesc().getNameAsString();
+      // this is a region belonging to the snapshot table
+      if (snapshotTable.equals(tableName)) {  
+          region.createSnapshot(snapshotDir);
+      }
+    }
+    
+    return true;
+  }
+  
+  /*
+   * Dump a file which contains a list of log files
+   */
+  private void dumpLogList(SortedMap<Long, Path> logFiles, Path dstDir) {
+    
+  }  
 
   Map<String, Integer> rowlocks =
     new ConcurrentHashMap<String, Integer>();

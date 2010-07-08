@@ -190,7 +190,9 @@ public class HRegion implements HeapSize { // , Writable{
     volatile boolean writesEnabled = true;
     // Set if region is read-only
     volatile boolean readOnly = false;
-
+    // Set if snapshot is running
+    volatile boolean snapshot = false;
+    
     /**
      * Set flags that make this region read-only.
      *
@@ -2247,6 +2249,44 @@ public class HRegion implements HeapSize { // , Writable{
       splitsAndClosesLock.readLock().unlock();
     }
 
+  }
+  
+  public boolean createSnapshot(Path snapshotDir) {
+    if (this.closing.get() || this.closed.get()) {
+      LOG.info("Aborting snapshot on " + this + " because closing/closed");
+      return false;
+    }
+    
+    synchronized (writestate) {
+      if (!writestate.flushing && !writestate.compacting) {
+        writestate.writesEnabled = false;
+        writestate.snapshot = true;
+      } else {
+        LOG.info("NOT performing snapshot for region " + this +
+          ", flushing=" + writestate.flushing +
+          ", compacting=" + writestate.compacting);
+        return false;
+      }
+    }
+    
+    internalCreateSnapshot();
+    
+    return true;
+  }
+  
+  private void internalCreateSnapshot(Path snapshotDir) {
+    Path backupRegionDir = new Path(snapshotDir, regionInfo.getEncodedName());
+    // dump region meta info
+    
+    for(Store store : stores.values()) {
+      Path familyDir = new Path(backupRegionDir, store.getFamily().getNameAsString());
+      for(StoreFile file : store.getStorefiles()) {
+        
+        FSUtils.createFileReference(fs, file.getPath(), familyDir);
+        
+        // update the reference count information
+      }
+    }
   }
 
 
