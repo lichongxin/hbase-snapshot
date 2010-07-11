@@ -40,6 +40,7 @@ import java.util.concurrent.locks.ReentrantLock;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -53,6 +54,7 @@ import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.HServerAddress;
 import org.apache.hadoop.hbase.HServerInfo;
 import org.apache.hadoop.hbase.HServerLoad;
+import org.apache.hadoop.hbase.HSnapshotDescriptor;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.LocalHBaseCluster;
@@ -63,13 +65,12 @@ import org.apache.hadoop.hbase.TableExistsException;
 import org.apache.hadoop.hbase.TablePartialOpenException;
 import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.HBaseAdmin;
-import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.MetaScanner;
-import org.apache.hadoop.hbase.client.MetaScanner.MetaScannerVisitor;
+import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.client.ServerConnection;
 import org.apache.hadoop.hbase.client.ServerConnectionManager;
-import org.apache.hadoop.hbase.executor.HBaseEventHandler;
+import org.apache.hadoop.hbase.client.MetaScanner.MetaScannerVisitor;
 import org.apache.hadoop.hbase.executor.HBaseExecutorService;
 import org.apache.hadoop.hbase.executor.HBaseEventHandler.HBaseEventType;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
@@ -79,6 +80,7 @@ import org.apache.hadoop.hbase.ipc.HBaseServer;
 import org.apache.hadoop.hbase.ipc.HMasterInterface;
 import org.apache.hadoop.hbase.ipc.HMasterRegionInterface;
 import org.apache.hadoop.hbase.ipc.HRegionInterface;
+import org.apache.hadoop.hbase.master.SnapshotMonitor.SnapshotStatus;
 import org.apache.hadoop.hbase.master.metrics.MasterMetrics;
 import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.HRegionServer;
@@ -868,15 +870,59 @@ public class HMaster extends Thread implements HMasterInterface,
 
   public void snapshot(final byte[] snapshotName, final byte[] tableName)
     throws IOException {
-    // TODO
-    if (connection.isTableDisabled(tableName)) {
+    HSnapshotDescriptor snapshot = new HSnapshotDescriptor(snapshotName, tableName);
+    
+    if (connection.isTableEnabled(tableName)) {
+      // start monitor first and then start the snapshot via ZK
+      SnapshotMonitor monitor = SnapshotMonitor.start(conf, this, snapshot);
+      zooKeeperWrapper.startSnapshot(snapshot);
       
-    } else if (connection.isTableDisabled(tableName)) {
-      
-    } else {
+      SnapshotStatus finalStatus = monitor.waitToFinish();
+      // not finished successfully
+      if (finalStatus != SnapshotStatus.M_ALLFINISH) {
+        // TODO do clean up work, use DeleteSnapshot
+      } 
+    } 
+    // For disabled table, we will create the snapshot on master
+    else if (connection.isTableDisabled(tableName)) {
+      try {
+        new TableSnapshot(this, snapshot).process();
+      } catch (IOException e) {
+        LOG.warn("Failed to create snapshot: " + snapshot, e);
+        // TODO clean up the unfinished snapshot
+        // use DeleteSnapshot
+      }
+    } 
+    else {
       LOG.debug("Snapshot can not be created on partial open table " + Bytes.toString(tableName));
       throw new TablePartialOpenException(tableName);
     }
+    
+    // finally dump a file containing the snapshot information
+    dumpSnapshotInfo(snapshot);
+    LOG.info("Snapshot is created successfully: " + snapshot);
+  }
+  
+  /*
+   * Dump the snapshot descriptor information into a file under the snapshot dir
+   */
+  private void dumpSnapshotInfo(final HSnapshotDescriptor snapshot) throws IOException {
+    Path snapshotDir = HSnapshotDescriptor.getSnapshotDir(rootdir, 
+        snapshot.getSnapshotName());
+    Path snapshotInfo = new Path(snapshotDir, HSnapshotDescriptor.SNAPSHOTINFO_FILE);
+    FSDataOutputStream out = this.fs.create(snapshotInfo, true);
+    try {
+      snapshot.write(out);
+    } finally {
+      out.close();
+    }
+  }
+  
+  /*
+   * Clean up the snapshot 
+   */
+  void abortSnapshot(final byte[] snapshotName, final byte[] tableName) {
+    // TODO
   }
 
   //snapshot operations

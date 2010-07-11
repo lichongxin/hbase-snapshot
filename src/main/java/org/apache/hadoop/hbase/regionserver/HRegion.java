@@ -19,12 +19,35 @@
  */
 package org.apache.hadoop.hbase.regionserver;
 
+import java.io.IOException;
+import java.io.UnsupportedEncodingException;
+import java.lang.reflect.Constructor;
+import java.util.AbstractList;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.NavigableSet;
+import java.util.Random;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.FileUtil;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.DoNotRetryIOException;
 import org.apache.hadoop.hbase.DroppedSnapshotException;
@@ -39,6 +62,7 @@ import org.apache.hadoop.hbase.UnknownScannerException;
 import org.apache.hadoop.hbase.HConstants.OperationStatusCode;
 import org.apache.hadoop.hbase.client.Delete;
 import org.apache.hadoop.hbase.client.Get;
+import org.apache.hadoop.hbase.client.HTable;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.RowLock;
@@ -63,28 +87,6 @@ import org.apache.hadoop.util.Progressable;
 import org.apache.hadoop.util.StringUtils;
 
 import com.google.common.collect.Lists;
-
-import java.io.IOException;
-import java.io.UnsupportedEncodingException;
-import java.lang.reflect.Constructor;
-import java.util.AbstractList;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.NavigableSet;
-import java.util.Random;
-import java.util.Set;
-import java.util.TreeMap;
-import java.util.TreeSet;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ConcurrentSkipListMap;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
  * HRegion stores data for a certain region of a table.  It stores all columns
@@ -327,7 +329,7 @@ public class HRegion implements HeapSize { // , Writable{
   public long initialize(final Progressable reporter)
   throws IOException {
     // Write HRI to a file in case we need to recover .META.
-    checkRegioninfoOnFilesystem();
+    checkRegioninfoOnFilesystem(regiondir);
 
     // Remove temporary data left over from old regions
     cleanupTmpDir();
@@ -397,16 +399,16 @@ public class HRegion implements HeapSize { // , Writable{
   }
 
   /*
-   * Write out an info file under the region directory.  Useful recovering
+   * Write out an info file under the given directory.  Useful recovering
    * mangled regions.
    * @throws IOException
    */
-  private void checkRegioninfoOnFilesystem() throws IOException {
+  private void checkRegioninfoOnFilesystem(Path dstDir) throws IOException {
     // Name of this file has two leading and trailing underscores so it doesn't
     // clash w/ a store/family name.  There is possibility, but assumption is
     // that its slim (don't want to use control character in filename because
     //
-    Path regioninfo = new Path(this.regiondir, REGIONINFO_FILE);
+    Path regioninfo = new Path(dstDir, REGIONINFO_FILE);
     if (this.fs.exists(regioninfo) &&
         this.fs.getFileStatus(regioninfo).getLen() > 0) {
       return;
@@ -487,7 +489,7 @@ public class HRegion implements HeapSize { // , Writable{
         writestate.writesEnabled = false;
         wasFlushing = writestate.flushing;
         LOG.debug("Closing " + this + ": disabling compactions & flushes");
-        while (writestate.compacting || writestate.flushing) {
+        while (writestate.compacting || writestate.flushing || writestate.snapshot) {
           LOG.debug("waiting for" +
               (writestate.compacting ? " compaction" : "") +
               (writestate.flushing ?
@@ -2251,7 +2253,14 @@ public class HRegion implements HeapSize { // , Writable{
 
   }
   
-  public boolean createSnapshot(Path snapshotDir) {
+  /**
+   * To start a snapshot, set WriteState.snapshot to true and 
+   * WriteState.writesEnabled to false so that region compaction and flush 
+   * is disabled between the start and completion of snapshot.
+   *  
+   * @return true if snapshot is started, false otherwise
+   */
+  public boolean startSnapshot() {
     if (this.closing.get() || this.closed.get()) {
       LOG.info("Aborting snapshot on " + this + " because closing/closed");
       return false;
@@ -2269,23 +2278,79 @@ public class HRegion implements HeapSize { // , Writable{
       }
     }
     
-    internalCreateSnapshot();
-    
     return true;
   }
   
-  private void internalCreateSnapshot(Path snapshotDir) {
-    Path backupRegionDir = new Path(snapshotDir, regionInfo.getEncodedName());
-    // dump region meta info
-    
-    for(Store store : stores.values()) {
-      Path familyDir = new Path(backupRegionDir, store.getFamily().getNameAsString());
-      for(StoreFile file : store.getStorefiles()) {
+  /**
+   * Perform the snapshot for this region. This should be fast since we don't 
+   * rewrite store files but instead back up the store files by creating "reference".
+   * 
+   * @param snapshotDir
+   * @return
+   * @throws IOException 
+   */
+  public void completeSnapshot(Path snapshotDir) throws IOException {
+    try {
+      // Prevent splits and closes
+      splitsAndClosesLock.readLock().lock();
+      try {
+        Path dstRegionDir = new Path(snapshotDir, regionInfo.getEncodedName());
+        HTable metaTable = null;
+        if (regionInfo.isMetaTable()) {
+          // we need update the ROOT table here
+          metaTable = new HTable(HConstants.ROOT_TABLE_NAME);
+        } else {
+          metaTable = new HTable(HConstants.META_TABLE_NAME);
+        }
         
-        FSUtils.createFileReference(fs, file.getPath(), familyDir);
+        // 1. dump region meta info
+        checkRegioninfoOnFilesystem(dstRegionDir);
         
-        // update the reference count information
+        for(Store store : stores.values()) {
+          Path dstFamilyDir = new Path(dstRegionDir, store.getFamily().getNameAsString());
+          for(StoreFile file : store.getStorefiles()) {
+            Path dstFile = null;
+            // 2. create "reference" to store files
+            if (StoreFile.isReference(file.getPath())) {
+              // copy the file directly if it is already a half reference file after split
+              dstFile = new Path(dstFamilyDir, file.getPath().getName());
+              FileUtil.copy(fs, file.getPath(), fs, dstFile, false, conf);
+            } else {
+              dstFile = FSUtils.createFileReference(fs, file.getPath(), dstFamilyDir);
+            }
+            // 3. update reference count for backup HFile
+            updateReferenceCountInMeta(metaTable, file.getPath(), dstFile);
+          }
+        }
+      } finally {
+        splitsAndClosesLock.readLock().unlock();
       }
+    } finally {
+      synchronized (writestate) {
+        writestate.writesEnabled = true;
+        writestate.snapshot = false;
+        writestate.notifyAll();
+      }
+    }
+  }
+  
+  /*
+   * Increase the reference count for these referred files by one 
+   */
+  private void updateReferenceCountInMeta(HTable metaTable, Path referredFile, 
+      Path reference) throws IOException {
+    try {
+      // reference count information is not stored in the original meta row for this 
+      // region but in a separate row whose row key is prefixed by ".SNAPSHOT."
+      // This can be seen as a virtual table ".SNAPSHOT."
+      byte[] row = Bytes.add(HConstants.SNAPSHOT_ROW_PREFIX, regionInfo.getRegionName());
+      metaTable.incrementColumnValue(row, HConstants.SNAPSHOT_FAMILY, 
+          Bytes.toBytes(referredFile.getName()), 1);
+    } catch (IOException e) {
+      LOG.debug("Failed to update reference count for " + referredFile);
+      // delete reference file if updating reference count in META fails
+      fs.delete(reference, true);
+      throw e;
     }
   }
 

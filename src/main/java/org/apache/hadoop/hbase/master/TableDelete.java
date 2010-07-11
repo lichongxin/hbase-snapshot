@@ -69,6 +69,9 @@ class TableDelete extends TableOperation {
           RemoteExceptionHandler.checkIOException(e));
       }
     }
+    
+    // archive table files that are used by snapshots
+    // TODO
 
     // delete the table's folder from fs.
     this.master.getFileSystem().delete(new Path(this.master.getRootDir(),

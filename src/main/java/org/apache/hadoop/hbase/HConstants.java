@@ -141,6 +141,9 @@ public final class HConstants {
 
   /** Used to construct the name of the compaction directory during compaction */
   public static final String HREGION_COMPACTIONDIR_NAME = "compaction.dir";
+  
+  /** Used to construct the name of the snapshot directory */
+  public static final String SNAPSHOT_DIR = ".snapshot";
 
   /** Default maximum file size */
   public static final long DEFAULT_MAX_FILE_SIZE = 256 * 1024 * 1024;
@@ -208,6 +211,12 @@ public final class HConstants {
 
   /** The upper-half split region column qualifier */
   public static final byte [] SPLITB_QUALIFIER = Bytes.toBytes("splitB");
+  
+  /** Prefix added to the row for snapshot region in .META. */
+  public static final byte [] SNAPSHOT_ROW_PREFIX = Bytes.toBytes(".SNAPSHOT.");
+  
+  /** The reference count family */
+  public static final byte [] SNAPSHOT_FAMILY  = Bytes.toBytes("snapshot");
 
   // Other constants
 

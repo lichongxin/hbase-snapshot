@@ -31,6 +31,8 @@ import org.apache.hadoop.fs.PathFilter;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.RemoteExceptionHandler;
+import org.apache.hadoop.hbase.io.Reference;
+import org.apache.hadoop.hbase.io.Reference.Range;
 import org.apache.hadoop.hbase.master.HMaster;
 import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hdfs.DistributedFileSystem;
@@ -645,11 +647,42 @@ public class FSUtils {
     LOG.info("Finished lease recover attempt for " + p);
   }
 
-  public static void archiveFiles(final FileSystem fs, List<Path> filesToArchive, final Path archiveDir) {
+  /**
+   * Archive files by moving the filesToArchive into the archive directory.
+   * 
+   * @param fs
+   * @param filesToArchive
+   * @param archiveDir
+   * @throws IOException 
+   */
+  public static void archiveFiles(final FileSystem fs, List<Path> filesToArchive, final Path archiveDir) throws IOException {
+    if (fs.exists(archiveDir)) {
+      fs.mkdirs(archiveDir);
+      LOG.info("Create archive directory: " + archiveDir);
+    }
     
+    for(Path file : filesToArchive) {
+      Path dstFile = new Path(archiveDir, file.getName());
+      LOG.info("Archive deleted file " + file + " to " + dstFile);
+      fs.rename(file, dstFile);
+    }
   }
   
-  public static void createFileReference(final FileSystem fs, final Path oringinFile, final Path dstDir) {
-    
+  /**
+   * Create a reference for srcFile under the passed dstDir
+   * 
+   * @param fs
+   * @param srcFile
+   * @param dstDir
+   * @return
+   * @throws IOException
+   */
+  public static Path createFileReference(final FileSystem fs, final Path srcFile, 
+      final Path dstDir) throws IOException {
+    // A reference to the entire store file.
+    Reference r = new Reference(null, Range.entire);
+    // reference has the same file name as src file
+    Path p = new Path(dstDir, srcFile.getName());
+    return r.write(fs, p);
   }
 }

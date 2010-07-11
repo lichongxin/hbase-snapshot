@@ -556,9 +556,10 @@ public class StoreFile {
   }
 
   /**
+   * 
    * @param fs
    * @param dir Directory to create file in.
-   * @return random filename inside passed <code>dir</code>
+   * @return unique filename inside passed <code>dir</code>
    */
   public static Path getUniqueFile(final FileSystem fs, final Path dir)
       throws IOException {
@@ -566,7 +567,12 @@ public class StoreFile {
       throw new IOException("Expecting " + dir.toString() +
         " to be a directory");
     }
-    return fs.getFileStatus(dir).isDir()? getRandomFilename(fs, dir): dir;
+    long filenum = System.currentTimeMillis();
+    Path uniqueFile = new Path(dir, Long.toString(filenum));
+    while (fs.exists(uniqueFile)) {
+      uniqueFile = new Path(dir, Long.toString(++filenum));
+    }
+    return uniqueFile;
   }
 
   /**

@@ -10,9 +10,19 @@ import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.io.Writable;
 
 public class HSnapshotDescriptor implements Writable {
+  public static final String SNAPSHOTINFO_FILE = ".snapshotinfo";
   private byte[] snapshotName;
   private byte[] tableName;
   private long creationTime;
+  
+  /**
+   * Default constructor is only used for deserialization
+   */
+  public HSnapshotDescriptor() {
+    snapshotName = null;
+    tableName = null;
+    creationTime = 0L;
+  }
   
   /**
    * Construct a HSnapshotDescriptor whose creationTime is current time
@@ -30,14 +40,12 @@ public class HSnapshotDescriptor implements Writable {
     this.creationTime = creationTime;
   }
   
-  /*
-   * This private contructor is used by readByteArray
-   */
-  private HSnapshotDescriptor() {
-  }
-  
   public byte[] getSnapshotName() {
     return snapshotName;
+  }
+  
+  public String getSnapshotNameAsString() {
+    return Bytes.toString(snapshotName);
   }
   
   public byte[] getTableName() {
@@ -87,8 +95,8 @@ public class HSnapshotDescriptor implements Writable {
   
   @Override
   public String toString() {
-    return "snapshotName=" + getSnapshotName() + 
-      ", tableName=" + getTableName(); 
+    return "snapshotName=" + getSnapshotNameAsString() + ", tableName=" +
+      getTableNameAsString() + ", creationTime=" + getCreationTime(); 
   }
   
   public static Path getSnapshotRootDir(final Path rootDir) {
@@ -98,9 +106,5 @@ public class HSnapshotDescriptor implements Writable {
   public static Path getSnapshotDir(final Path rootDir, final byte [] snapshotName) {
     return new Path(new Path(rootDir, HConstants.SNAPSHOT_DIR), 
         Bytes.toString(snapshotName));
-  }
-  
-  public static Path getSnapshotRegionDir(final Path rootDir, final byte [] snapshotName, final HRegionInfo info) {
-    return new Path(getSnapshotDir(rootDir, snapshotName), info.getEncodedName());
   }
 }

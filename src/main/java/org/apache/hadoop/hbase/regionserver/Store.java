@@ -344,7 +344,7 @@ public class Store implements HeapSize {
       srcPath = tmpPath;
     }
 
-    Path dstPath = StoreFile.getRandomFilename(fs, homedir);
+    Path dstPath = StoreFile.getUniqueFile(fs, homedir);
     LOG.info("Renaming bulk load file " + srcPath + " to " + dstPath);
     StoreFile.rename(fs, srcPath, dstPath);
 
@@ -869,7 +869,7 @@ public class Store implements HeapSize {
       Path p = null;
       try {
         p = StoreFile.rename(this.fs, compactedFile.getPath(),
-          StoreFile.getRandomFilename(fs, this.homedir));
+          StoreFile.getUniqueFile(fs, this.homedir));
       } catch (IOException e) {
         LOG.error("Failed move of compacted file " + compactedFile.getPath(), e);
         return null;
