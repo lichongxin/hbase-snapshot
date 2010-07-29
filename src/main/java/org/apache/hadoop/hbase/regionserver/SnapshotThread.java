@@ -25,11 +25,11 @@ import org.apache.hadoop.hbase.HSnapshotDescriptor;
 import org.apache.hadoop.hbase.master.SnapshotMonitor.SnapshotStatus;
 
 /**
- * Thread that creates the snapshot on request.
+ * Thread that creates the snapshot on region server.
  */
 public class SnapshotThread extends Thread {
   private static final Log LOG = LogFactory.getLog(SnapshotThread.class);
-  
+
   private final HSnapshotDescriptor snapshot;
   private final HRegionServer server;
 
@@ -37,20 +37,21 @@ public class SnapshotThread extends Thread {
     this.snapshot = snapshot;
     this.server = server;
   }
-  
+
   @Override
   public void run(){
     try {
+      LOG.debug("Start snapshot thread for: " + snapshot);
       server.performSnapshot(snapshot);
     } catch (Throwable e) {
       LOG.info("Failed to perform snapshot: " + snapshot + " on RS " + 
           server.getServerInfo().getServerName(), e);
-      
+
       /*
        * remove the RS node under ready/finish status, there are two situations when
        * a exception occurs:
        * 1. if ready or finish node has been created under corresponding directory
-       * this will trigger the master to abort the whole snapshot process and then 
+       * this will trigger the master to abort the whole snapshot process and then
        * master will do the clean up work.
        * 2. if exception occurs before this RS is ready for snapshot, then nothing
        * will be created or deleted. Master will abort the snapshot when timeout.
@@ -62,14 +63,12 @@ public class SnapshotThread extends Thread {
     }
   }
 
-  
   /**
    * Get current snapshot descriptor for this thread
-   * 
+   *
    * @return
    */
   public HSnapshotDescriptor getCurrentSnapshot() {
     return snapshot;
   }
-
 }

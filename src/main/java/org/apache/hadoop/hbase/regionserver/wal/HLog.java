@@ -1072,7 +1072,7 @@ public class HLog implements Syncable {
   int getNumLogFiles() {
     return outputfiles.size();
   }
-  
+
   /**
    * @return a sorted map containing all the current files and corresponding
    *         sequence number

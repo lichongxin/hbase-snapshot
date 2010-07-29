@@ -310,6 +310,15 @@ public class FSUtils {
   }
 
   /**
+   * @param c configuration
+   * @return Path to the archive directory for old HFiles
+   * @throws IOException e
+   */
+  public static Path getOldHFilesDir(final Configuration c) throws IOException {
+    return new Path(getRootDir(c), HConstants.ARCHIVE_DIR);
+  }
+
+  /**
    * Checks if root region exists
    *
    * @param fs file system
@@ -648,29 +657,42 @@ public class FSUtils {
   }
 
   /**
-   * Archive files by moving the filesToArchive into the archive directory.
-   * 
+   * Archive HFile of the a table into the archiveDir
+   *
    * @param fs
-   * @param filesToArchive
+   * @param srcFile source file to be archived
    * @param archiveDir
-   * @throws IOException 
+   * @throws IOException
    */
-  public static void archiveFiles(final FileSystem fs, List<Path> filesToArchive, final Path archiveDir) throws IOException {
+  public static void archiveHFile(final FileSystem fs, final Path srcFile,
+      final Path archiveDir) throws IOException {
     if (fs.exists(archiveDir)) {
       fs.mkdirs(archiveDir);
       LOG.info("Create archive directory: " + archiveDir);
     }
-    
-    for(Path file : filesToArchive) {
-      Path dstFile = new Path(archiveDir, file.getName());
-      LOG.info("Archive deleted file " + file + " to " + dstFile);
-      fs.rename(file, dstFile);
+
+    Path dstFile = getHFileArchivePath(srcFile, archiveDir); 
+    LOG.info("Archive deleted file " + srcFile + " to " + dstFile);
+    if (!fs.exists(dstFile.getParent())) {
+      fs.mkdirs(dstFile.getParent());
     }
+    boolean result = fs.rename(srcFile, dstFile);
+    System.out.println(result);
   }
-  
+
+  public static Path getHFileArchivePath(final Path srcFile, final Path archiveDir) {
+    String family = srcFile.getParent().getName();
+    String region = srcFile.getParent().getParent().getName();
+    String table = srcFile.getParent().getParent().getParent().getName();
+
+    Path dstDir = new Path(new Path(new Path(archiveDir, table), region), family);
+
+    return new Path(dstDir, srcFile.getName());
+  }
+
   /**
    * Create a reference for srcFile under the passed dstDir
-   * 
+   *
    * @param fs
    * @param srcFile
    * @param dstDir
@@ -681,8 +703,10 @@ public class FSUtils {
       final Path dstDir) throws IOException {
     // A reference to the entire store file.
     Reference r = new Reference(null, Range.entire);
+
+    String parentRegionName = srcFile.getParent().getParent().getName();
     // reference has the same file name as src file
-    Path p = new Path(dstDir, srcFile.getName());
+    Path p = new Path(dstDir, srcFile.getName() + "." + parentRegionName);
     return r.write(fs, p);
   }
 }

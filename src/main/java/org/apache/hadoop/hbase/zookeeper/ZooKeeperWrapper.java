@@ -220,8 +220,8 @@ public class ZooKeeperWrapper implements Watcher {
     masterElectionZNode = getZNode(parentZNode, masterAddressZNodeName);
     clusterStateZNode   = getZNode(parentZNode, stateZNodeName);
     snapshotRootZNode   = getZNode(parentZNode, snapshotRootZNodeName);
-    snapshotReadyZNode  = getZNode(snapshotRootZNodeName, snapshotReadyZNodeName);
-    snapshotFinishZNode  = getZNode(snapshotRootZNodeName, snapshotFinishZNodeName);
+    snapshotReadyZNode  = getZNode(snapshotRootZNode, snapshotReadyZNodeName);
+    snapshotFinishZNode  = getZNode(snapshotRootZNode, snapshotFinishZNodeName);
   }
   
   public void reconnectToZk() throws IOException {
@@ -1202,35 +1202,33 @@ public class ZooKeeperWrapper implements Watcher {
     }
     
   }
-  
+
   public String getSnapshotRootZNode() {
     return snapshotRootZNode;
   }
-  
+
   public String getSnapshotReadyZNode() {
     return snapshotReadyZNode;
   }
-  
+
   public String getSnapshotFinishZNode() {
     return snapshotFinishZNode;
   }
-  
+
   /**
-   * Start the snapshot across the cluster via ZooKeeper and set a 
+   * Start the snapshot across the cluster via ZooKeeper and set a
    * watch on snapshot directory.
-   * 
+   *
    * @param snapshot
    * @return true if data was set on snapshot znode, false otherwise
    * @throws IOException
    */
   public boolean startSnapshot(final HSnapshotDescriptor snapshot) {
     try {
-      // create and watch status znodes: ready and finish  
-      zooKeeper.create(snapshotReadyZNode, new byte[0], Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
-      zooKeeper.create(snapshotFinishZNode, new byte[0], Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
-      watchZNode(snapshotReadyZNode);
-      watchZNode(snapshotFinishZNode);
-      
+      // create and watch status znodes: ready and finish
+      createZNodeIfNotExists(snapshotReadyZNode);
+      createZNodeIfNotExists(snapshotFinishZNode);
+
       byte[] data = Writables.getBytes(snapshot);
       zooKeeper.setData(snapshotRootZNode, data, -1);
       LOG.debug("<" + instanceName + ">" + "Starting snapshot " + snapshot);
@@ -1246,15 +1244,15 @@ public class ZooKeeperWrapper implements Watcher {
       return false;
     }
   }
-  
+
   /**
    * Abort the snapshot across the cluster via ZooKeeper.
-   * 
+   *
    * @return true if data was set on snapshot znode, false otherwise
    */
   public boolean abortSnapshot() {
     try {
-      zooKeeper.setData(snapshotRootZNode, new byte[0], -1);
+      zooKeeper.setData(snapshotRootZNode, HConstants.EMPTY_BYTE_ARRAY, -1);
       LOG.debug("<" + instanceName + ">" + "Aborting snapshot");
       return true;
     } catch (KeeperException e) {
@@ -1265,21 +1263,21 @@ public class ZooKeeperWrapper implements Watcher {
       return false;
     }
   }
-  
+
   /**
    * Create RS znode under corresponding status directory.
    * For a RS, the status of the snapshot could be
-   * <code>SnapshotStatus.READY</code> or <code>SnapshotStatus.FINISH</code>
-   * 
+   * <code>SnapshotStatus.RS_READY</code> or <code>SnapshotStatus.RS_FINISH</code>
+   *
    * @param serverName
    * @param status
    */
   public void registerRSForSnapshot(final String serverName, final SnapshotStatus status) {
-    if (!exists(snapshotReadyZNode, false) || 
+    if (!exists(snapshotReadyZNode, false) ||
         !exists(snapshotFinishZNode, false)) {
       throw new RuntimeException("Ready/Finish directory doesn't exist for snapshot");
     }
-    
+
     try {
       if (status == SnapshotStatus.RS_READY) {
         String rsReadyPath = snapshotReadyZNode + ZNODE_PATH_SEPARATOR + serverName;
@@ -1290,7 +1288,7 @@ public class ZooKeeperWrapper implements Watcher {
       } else {
         throw new RuntimeException("Invalid snapshot status: " + status);
       }
-      LOG.debug("<" + instanceName + ">" + "Created ZNode for RS " + serverName + 
+      LOG.debug("<" + instanceName + ">" + "Created ZNode for RS " + serverName +
           " under snapshot " + status + " status");
     } catch (KeeperException e) {
       LOG.error("<" + instanceName + ">" + "Failed to register RS ZNode for snapshot", e);
@@ -1298,19 +1296,18 @@ public class ZooKeeperWrapper implements Watcher {
       LOG.error("<" + instanceName + ">" + "Failed to register RS ZNode for snapshot", e);
     }
   }
-  
+
   /**
-   * 
-   * 
+   * Remove a RS node under corresponding status directory.
    * @param serverName
    * @param status
    */
   public void removeRSForSnapshot(final String serverName, final SnapshotStatus status) {
     if (!exists(snapshotReadyZNode, false) || 
         !exists(snapshotFinishZNode, false)) {
-      throw new RuntimeException("Ready/Finish directory doesn't exist for snapshot");
+      LOG.debug("Ready/Finish directory has been removed for snapshot, skipping");
     }
-    
+
     try {
       if (status == SnapshotStatus.RS_READY) {
         String rsReadyPath = snapshotReadyZNode + ZNODE_PATH_SEPARATOR + serverName;
@@ -1321,7 +1318,7 @@ public class ZooKeeperWrapper implements Watcher {
       } else {
         throw new RuntimeException("Invalid snapshot status: " + status);
       }
-      LOG.debug("<" + instanceName + ">" + "Remove ZNode for RS " + serverName + 
+      LOG.debug("<" + instanceName + ">" + "Remove ZNode for RS " + serverName +
           " under snapshot " + status + " status");
     } catch (KeeperException.NoNodeException e) {
       // ok, move on
@@ -1331,7 +1328,7 @@ public class ZooKeeperWrapper implements Watcher {
       LOG.error("<" + instanceName + ">" + "Failed to remove RS ZNode for snapshot", e);
     }
   }
-  
+
   /**
    * Clean up the snapshot directory before a snapshot is started
    */

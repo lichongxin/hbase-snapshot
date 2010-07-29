@@ -194,7 +194,7 @@ public class HRegion implements HeapSize { // , Writable{
     volatile boolean readOnly = false;
     // Set if snapshot is running
     volatile boolean snapshot = false;
-    
+
     /**
      * Set flags that make this region read-only.
      *
@@ -329,7 +329,7 @@ public class HRegion implements HeapSize { // , Writable{
   public long initialize(final Progressable reporter)
   throws IOException {
     // Write HRI to a file in case we need to recover .META.
-    checkRegioninfoOnFilesystem(regiondir);
+    checkRegioninfoOnFilesystem(fs, regionInfo, regiondir);
 
     // Remove temporary data left over from old regions
     cleanupTmpDir();
@@ -398,27 +398,31 @@ public class HRegion implements HeapSize { // , Writable{
     return false;
   }
 
-  /*
+  /**
    * Write out an info file under the given directory.  Useful recovering
    * mangled regions.
-   * @throws IOException
+   * @param fs
+   * @param info region to be written out
+   * @param dstDir directory where the region info is written to
+   * @throws IOException e
    */
-  private void checkRegioninfoOnFilesystem(Path dstDir) throws IOException {
+  public static void checkRegioninfoOnFilesystem(final FileSystem fs,
+      final HRegionInfo info, final Path dstDir) throws IOException {
     // Name of this file has two leading and trailing underscores so it doesn't
     // clash w/ a store/family name.  There is possibility, but assumption is
     // that its slim (don't want to use control character in filename because
     //
     Path regioninfo = new Path(dstDir, REGIONINFO_FILE);
-    if (this.fs.exists(regioninfo) &&
-        this.fs.getFileStatus(regioninfo).getLen() > 0) {
+    if (fs.exists(regioninfo) &&
+        fs.getFileStatus(regioninfo).getLen() > 0) {
       return;
     }
-    FSDataOutputStream out = this.fs.create(regioninfo, true);
+    FSDataOutputStream out = fs.create(regioninfo, true);
     try {
-      this.regionInfo.write(out);
+      info.write(out);
       out.write('\n');
       out.write('\n');
-      out.write(Bytes.toBytes(this.regionInfo.toString()));
+      out.write(Bytes.toBytes(info.toString()));
     } finally {
       out.close();
     }
@@ -2252,12 +2256,13 @@ public class HRegion implements HeapSize { // , Writable{
     }
 
   }
-  
+
   /**
-   * To start a snapshot, set WriteState.snapshot to true and 
-   * WriteState.writesEnabled to false so that region compaction and flush 
-   * is disabled between the start and completion of snapshot.
-   *  
+   * Start a snapshot.
+   * WriteState.snapshot is set to true and WriteState.writesEnabled is set
+   * to false so region compaction and flush is disabled during the process
+   * of snapshot.
+   *
    * @return true if snapshot is started, false otherwise
    */
   public boolean startSnapshot() {
@@ -2265,7 +2270,7 @@ public class HRegion implements HeapSize { // , Writable{
       LOG.info("Aborting snapshot on " + this + " because closing/closed");
       return false;
     }
-    
+
     synchronized (writestate) {
       if (!writestate.flushing && !writestate.compacting) {
         writestate.writesEnabled = false;
@@ -2277,49 +2282,53 @@ public class HRegion implements HeapSize { // , Writable{
         return false;
       }
     }
-    
+    LOG.debug("Snapshot is started on " + this);
     return true;
   }
-  
+
   /**
-   * Perform the snapshot for this region. This should be fast since we don't 
-   * rewrite store files but instead back up the store files by creating "reference".
-   * 
+   * Complete the snapshot for this region. This should be fast since we don't
+   * rewrite store files but instead back up the store files by creating
+   * "reference".
+   *
    * @param snapshotDir
-   * @return
-   * @throws IOException 
+   * @param meta
+   * @throws IOException
    */
-  public void completeSnapshot(Path snapshotDir) throws IOException {
+  public void completeSnapshot(final Path snapshotDir, final HTable meta)
+    throws IOException {
     try {
       // Prevent splits and closes
       splitsAndClosesLock.readLock().lock();
       try {
         Path dstRegionDir = new Path(snapshotDir, regionInfo.getEncodedName());
-        HTable metaTable = null;
-        if (regionInfo.isMetaTable()) {
-          // we need update the ROOT table here
-          metaTable = new HTable(HConstants.ROOT_TABLE_NAME);
+        if (!fs.exists(dstRegionDir)) {
+          fs.mkdirs(dstRegionDir);
         } else {
-          metaTable = new HTable(HConstants.META_TABLE_NAME);
+          LOG.warn("Region dir " + dstRegionDir + " already exists.");
+          throw new IOException("Region dir already exists for snapshot");
         }
-        
+
         // 1. dump region meta info
-        checkRegioninfoOnFilesystem(dstRegionDir);
-        
+        checkRegioninfoOnFilesystem(fs, regionInfo, dstRegionDir);
+
         for(Store store : stores.values()) {
-          Path dstFamilyDir = new Path(dstRegionDir, store.getFamily().getNameAsString());
+          Path dstStoreDir = new Path(dstRegionDir, store.getFamily().getNameAsString());
+          if (!fs.exists(dstStoreDir)) {
+            fs.mkdirs(dstStoreDir);
+          }
           for(StoreFile file : store.getStorefiles()) {
             Path dstFile = null;
             // 2. create "reference" to store files
             if (StoreFile.isReference(file.getPath())) {
-              // copy the file directly if it is already a half reference file after split
-              dstFile = new Path(dstFamilyDir, file.getPath().getName());
+              // copy the file directly if it is already a reference file
+              dstFile = new Path(dstStoreDir, file.getPath().getName());
               FileUtil.copy(fs, file.getPath(), fs, dstFile, false, conf);
             } else {
-              dstFile = FSUtils.createFileReference(fs, file.getPath(), dstFamilyDir);
+              dstFile = FSUtils.createFileReference(fs, file.getPath(), dstStoreDir);
             }
             // 3. update reference count for backup HFile
-            updateReferenceCountInMeta(metaTable, file.getPath(), dstFile);
+            updateReferenceCountInMeta(meta, file.getPath(), dstFile);
           }
         }
       } finally {
@@ -2333,22 +2342,24 @@ public class HRegion implements HeapSize { // , Writable{
       }
     }
   }
-  
+
   /*
-   * Increase the reference count for these referred files by one 
+   * Increase the reference count for these referred files by one.
    */
-  private void updateReferenceCountInMeta(HTable metaTable, Path referredFile, 
+  private void updateReferenceCountInMeta(HTable metaTable, Path referredFile,
       Path reference) throws IOException {
     try {
-      // reference count information is not stored in the original meta row for this 
+      // reference count information is not stored in the original meta row for this
       // region but in a separate row whose row key is prefixed by ".SNAPSHOT."
       // This can be seen as a virtual table ".SNAPSHOT."
-      byte[] row = Bytes.add(HConstants.SNAPSHOT_ROW_PREFIX, regionInfo.getRegionName());
-      metaTable.incrementColumnValue(row, HConstants.SNAPSHOT_FAMILY, 
-          Bytes.toBytes(referredFile.getName()), 1);
+      byte[] row = regionInfo.getReferenceMetaRow();
+      metaTable.incrementColumnValue(row, HConstants.SNAPSHOT_FAMILY,
+          Bytes.toBytes(FSUtils.getPath(referredFile)), 1);
     } catch (IOException e) {
       LOG.debug("Failed to update reference count for " + referredFile);
-      // delete reference file if updating reference count in META fails
+      // Keep the reference count consistent with the actual number of
+      // reference files. Delete reference file if updating reference
+      // count in META fails
       fs.delete(reference, true);
       throw e;
     }
@@ -2752,16 +2763,48 @@ public class HRegion implements HeapSize { // , Writable{
   }
 
   /**
-   * Deletes all the files for a HRegion
+   * Deletes the files for a HRegion if they are not used by references,
+   * otherwise, archive these files
    *
    * @param fs the file system object
    * @param rootdir qualified path of HBase root directory
+   * @param oldFilesDir directory where archived HFiles go to
    * @param info HRegionInfo for region to be deleted
    * @throws IOException
    */
-  public static void deleteRegion(FileSystem fs, Path rootdir, HRegionInfo info)
+  public static void deleteRegion(FileSystem fs, Path rootdir, Path oldFilesDir,
+      HRegionInfo info)
   throws IOException {
+    archiveRegion(fs, info, oldFilesDir);
+
+    // delete all the files that are not archived
     deleteRegion(fs, HRegion.getRegionDir(rootdir, info));
+  }
+  
+  /*
+   * Archive HRegion's HFiles whose reference count > 0.
+   */
+  private static void archiveRegion(FileSystem fs, HRegionInfo info,
+      Path oldFilesDir) throws IOException {
+    HTable metaTable = new HTable(HConstants.META_TABLE_NAME);
+
+    // the .META. row which contains reference count information for this region
+    byte[] row = info.getReferenceMetaRow();
+    Get get = new Get(row);
+    Result result = metaTable.get(get);
+    Map<byte[], byte[]> filesRefCount = result.getFamilyMap(HConstants.SNAPSHOT_FAMILY);
+    if (filesRefCount != null) {
+      for(Map.Entry<byte[], byte[]> file: filesRefCount.entrySet()) {
+        String filePath = Bytes.toString(file.getKey());
+        long refCount = Bytes.toLong(file.getValue());
+        if (refCount <= 0) {
+          // don't archive the HFile whose reference count is <= 0
+          continue;
+        }
+        LOG.debug("Archiving HFile: " + filePath);
+        FSUtils.archiveHFile(fs, new Path(filePath), oldFilesDir);
+      }
+    }
   }
 
   private static void deleteRegion(FileSystem fs, Path regiondir)

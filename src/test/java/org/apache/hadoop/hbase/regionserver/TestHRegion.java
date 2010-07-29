@@ -85,7 +85,7 @@ public class TestHRegion extends HBaseTestCase {
   private final int MAX_VERSIONS = 2;
 
   // Test names
-  protected final byte[] tableName = Bytes.toBytes("testtable");;
+  protected final byte[] tableName = Bytes.toBytes("testtable");
   protected final byte[] qual1 = Bytes.toBytes("qual1");
   protected final byte[] qual2 = Bytes.toBytes("qual2");
   protected final byte[] qual3 = Bytes.toBytes("qual3");
@@ -2119,6 +2119,9 @@ public class TestHRegion extends HBaseTestCase {
    * @throws Exception
    */
   public void testBasicSplit() throws Exception {
+    HBaseTestingUtility TEST_UTIL = new HBaseTestingUtility();
+    TEST_UTIL.startMiniCluster();
+
     byte [] tableName = Bytes.toBytes("testtable");
     byte [][] families = {fam1, fam2, fam3};
 
@@ -2203,6 +2206,7 @@ public class TestHRegion extends HBaseTestCase {
         region.close();
         region.getLog().closeAndDelete();
       }
+      TEST_UTIL.shutdownMiniCluster();
     }
   }
 

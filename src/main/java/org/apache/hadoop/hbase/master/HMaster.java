@@ -145,6 +145,8 @@ public class HMaster extends Thread implements HMasterInterface,
   private ZooKeeperWrapper zooKeeperWrapper;
   // Watcher for master address and for cluster shutdown.
   private final ZKMasterAddressWatcher zkMasterAddressWatcher;
+  // monitor for snapshot of hbase tables
+  private final SnapshotMonitor snapshotMonitor;
   // A Sleeper that sleeps for threadWakeFrequency; sleep if nothing todo.
   private final Sleeper sleeper;
   // Keep around for convenience.
@@ -153,6 +155,8 @@ public class HMaster extends Thread implements HMasterInterface,
   private volatile boolean fsOk = true;
   // The Path to the old logs dir
   private final Path oldLogDir;
+  // The Path to the old HFiles dir
+  private final Path archiveDir;
 
   private final HBaseServer rpcServer;
   private final HServerAddress address;
@@ -201,6 +205,11 @@ public class HMaster extends Thread implements HMasterInterface,
       this.fs.mkdirs(this.oldLogDir);
     }
 
+    this.archiveDir = FSUtils.getOldHFilesDir(conf);
+    if(!this.fs.exists(this.archiveDir)) {
+      this.fs.mkdirs(this.archiveDir);
+    }
+
     // Get my address and create an rpc server instance.  The rpc-server port
     // can be ephemeral...ensure we have the correct info
     HServerAddress a = new HServerAddress(getMyAddress(this.conf));
@@ -225,6 +234,7 @@ public class HMaster extends Thread implements HMasterInterface,
       new ZKMasterAddressWatcher(this.zooKeeperWrapper, this.shutdownRequested);
     zooKeeperWrapper.registerListener(zkMasterAddressWatcher);
     this.zkMasterAddressWatcher.writeAddressToZooKeeper(this.address, true);
+    this.snapshotMonitor = new SnapshotMonitor(conf, this);
     this.regionServerOperationQueue =
       new RegionServerOperationQueue(this.conf, this.closed);
 
@@ -442,6 +452,10 @@ public class HMaster extends Thread implements HMasterInterface,
     return this.connection;
   }
 
+  SnapshotMonitor getSnapshotMonitor() {
+    return this.snapshotMonitor;
+  }
+
   /**
    * Get the ZK wrapper object
    * @return the zookeeper wrapper
@@ -473,6 +487,14 @@ public class HMaster extends Thread implements HMasterInterface,
    */
   public Path getOldLogDir() {
     return this.oldLogDir;
+  }
+  
+  /**
+   * Get the directory where old HFiles go
+   * @return the dir
+   */
+  public Path getArchiveDir() {
+    return this.archiveDir;
   }
 
   /**
@@ -870,43 +892,49 @@ public class HMaster extends Thread implements HMasterInterface,
 
   public void snapshot(final byte[] snapshotName, final byte[] tableName)
     throws IOException {
-    HSnapshotDescriptor snapshot = new HSnapshotDescriptor(snapshotName, tableName);
-    
+    if (snapshotMonitor.isInProcess()) {
+      LOG.warn("Another snapshot is still in process, giving up...");
+      throw new IOException("Snapshot in process");
+    }
+    HSnapshotDescriptor hsd = new HSnapshotDescriptor(snapshotName, tableName);
+
     if (connection.isTableEnabled(tableName)) {
       // start monitor first and then start the snapshot via ZK
-      SnapshotMonitor monitor = SnapshotMonitor.start(conf, this, snapshot);
-      zooKeeperWrapper.startSnapshot(snapshot);
-      
-      SnapshotStatus finalStatus = monitor.waitToFinish();
-      // not finished successfully
+      snapshotMonitor.start(hsd);
+      zooKeeperWrapper.startSnapshot(hsd);
+
+      // snapshot is not created successfully, clean up snapshot files
+      SnapshotStatus finalStatus = snapshotMonitor.waitToFinish();
       if (finalStatus != SnapshotStatus.M_ALLFINISH) {
-        // TODO do clean up work, use DeleteSnapshot
-      } 
-    } 
+          deleteSnapshot(snapshotName);
+      }
+    }
     // For disabled table, we will create the snapshot on master
     else if (connection.isTableDisabled(tableName)) {
       try {
-        new TableSnapshot(this, snapshot).process();
+        new TableSnapshot(this, hsd).process();
       } catch (IOException e) {
-        LOG.warn("Failed to create snapshot: " + snapshot, e);
-        // TODO clean up the unfinished snapshot
-        // use DeleteSnapshot
+        LOG.warn("Failed to create snapshot: " + hsd, e);
+        // clean up the unfinished snapshot
+        deleteSnapshot(snapshotName);
       }
-    } 
+    }
     else {
-      LOG.debug("Snapshot can not be created on partial open table " + Bytes.toString(tableName));
+      LOG.debug("Snapshot can not be created on partial open table "
+          + Bytes.toString(tableName));
       throw new TablePartialOpenException(tableName);
     }
-    
+
     // finally dump a file containing the snapshot information
-    dumpSnapshotInfo(snapshot);
-    LOG.info("Snapshot is created successfully: " + snapshot);
+    dumpSnapshotInfo(hsd);
+    LOG.info("Snapshot is created successfully: " + hsd);
   }
-  
+
   /*
    * Dump the snapshot descriptor information into a file under the snapshot dir
    */
-  private void dumpSnapshotInfo(final HSnapshotDescriptor snapshot) throws IOException {
+  private void dumpSnapshotInfo(final HSnapshotDescriptor snapshot)
+    throws IOException {
     Path snapshotDir = HSnapshotDescriptor.getSnapshotDir(rootdir, 
         snapshot.getSnapshotName());
     Path snapshotInfo = new Path(snapshotDir, HSnapshotDescriptor.SNAPSHOTINFO_FILE);
@@ -917,20 +945,13 @@ public class HMaster extends Thread implements HMasterInterface,
       out.close();
     }
   }
-  
-  /*
-   * Clean up the snapshot 
-   */
-  void abortSnapshot(final byte[] snapshotName, final byte[] tableName) {
-    // TODO
-  }
 
   //snapshot operations
   
   public void restoreSnapshot(final byte[] snapshotName) throws IOException {
     // TODO
   }
-  
+
   public void deleteSnapshot(final byte[] snapshotName) throws IOException {
     // TODO
   }

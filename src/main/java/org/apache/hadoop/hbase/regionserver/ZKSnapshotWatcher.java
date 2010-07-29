@@ -41,54 +41,55 @@ public class ZKSnapshotWatcher implements Watcher {
 
   private HRegionServer server;
   private ZooKeeperWrapper zkWrapper;
-  
+
   // thread that creates the snapshot
-  private SnapshotThread snapshotThread;
-  
+  SnapshotThread snapshotThread;
+
   /**
    * Start watching the snapshot start/abort request on snapshot znode.
-   * 
+   *
    * @param conf
    * @param server
+   * @return ZKSnapshotWatcher instance which is just started
    */
-  public static void start(Configuration conf, HRegionServer server) {
-    new ZKSnapshotWatcher(conf, server);
+  public static ZKSnapshotWatcher start(Configuration conf, HRegionServer server) {
     LOG.debug("Started ZKSnapshot Watcher");
+    return new ZKSnapshotWatcher(conf, server);
   }
-  
+
   ZKSnapshotWatcher(Configuration conf, HRegionServer server) {
-    this.zkWrapper = ZooKeeperWrapper.getInstance(conf, server.getClass().getName());
+    this.zkWrapper = ZooKeeperWrapper.getInstance(conf,
+        server.getServerInfo().getServerName());
     this.server = server;
-    
-    String snapshotZNode = zkWrapper.getSnapshotRootZNode();
-    
-    if (zkWrapper.exists(snapshotZNode, false)) {
-      zkWrapper.cleanupSnapshotZNode();
+
+    String snapshotNode = zkWrapper.getSnapshotRootZNode();
+    if (!zkWrapper.exists(snapshotNode, false)) {
+      zkWrapper.createZNodeIfNotExists(snapshotNode);
     }
-    zkWrapper.createZNodeIfNotExists(zkWrapper.getSnapshotRootZNode());
+    // set a watch on snapshot root znode
+    zkWrapper.watchZNode(snapshotNode);
     zkWrapper.registerListener(this);
   }
-  
+
   @Override
   public synchronized void process(WatchedEvent event) {
     EventType type = event.getType();
     LOG.debug("Got ZooKeeper event, state: " + event.getState() + ", type: "
         + event.getType() + ", path: " + event.getPath());
-    
+
     // check if the path is the snapshot directory that we care about
     if (event.getPath() == null
         || !event.getPath().equals(zkWrapper.getSnapshotRootZNode())) {
        return;
     }
-    
+
     // ignore other events except NodeDataChanged event for snapshot root directory
     if (!type.equals(EventType.NodeDataChanged)) {
       return;
     }
-    
+
     try {
       byte[] data = zkWrapper.readZNode(zkWrapper.getSnapshotRootZNode(), null);
-      
       /*
        * if data in snapshot root znode is not empty, create snapshot based on
        * the data in the node
@@ -98,50 +99,54 @@ public class ZKSnapshotWatcher implements Watcher {
           .getWritable(data, new HSnapshotDescriptor());
         LOG.debug("Create snapshot on RS: " + snapshot + ", RS=" + 
             server.getServerInfo().getServerName());
-        
+
         handleSnapshotStart(snapshot);
       }
       /*
        * if data in snapshot root znode is set empty, abort current snapshot
        */
       else {
-        HSnapshotDescriptor snapshot = snapshotThread.getCurrentSnapshot();
-        LOG.debug("Abort snapshot on RS: " + snapshot + ", RS=" + 
-            server.getServerInfo().getServerName());
-        
+        if (snapshotThread != null) {
+          HSnapshotDescriptor snapshot = snapshotThread.getCurrentSnapshot();
+          LOG.debug("Abort snapshot on RS: " + snapshot + ", RS=" + 
+              server.getServerInfo().getServerName());
+        }
         handleSnapshotAbort();
       }
-      
     } catch (IOException e) {
       LOG.error("Could not process event from ZooKeeper", e);
     }
-
   }
 
   /*
    * Perform snapshot in a separate thread
    */
   private void handleSnapshotStart(final HSnapshotDescriptor snapshot) {
+    // if there is a snapshot thread is still running, don't start another
+    if (snapshotThread != null && snapshotThread.isAlive()) {
+      LOG.warn("Another snapshot is still in process.");
+      return;
+    }
     snapshotThread = new SnapshotThread(snapshot, server);
     snapshotThread.start();
   }
-  
+
   /*
-   * Abort current snapshot by interrupting the snapshot thread.
-   * If the thread has terminated, there is nothing to do, and 
-   * master will do the clean up work in ZK and HDFS.
+   * Abort current snapshot by interrupting the snapshot thread and
+   * then remove the RS node under ready and finish directory.
+   * The master will do the clean up work on file system.
    */
   private void handleSnapshotAbort() {
     if (snapshotThread != null && snapshotThread.isAlive()) {
       snapshotThread.interrupt();
-    } 
+    }
     snapshotThread = null;
-    
-    // remove RS znodes under ready/finish to notify the master
+
+    // remove RS znodes under ready and finish directory to notify the master
     // snapshot has been aborted on this RS
-    zkWrapper.removeRSForSnapshot(server.getServerInfo().getServerName(), 
+    zkWrapper.removeRSForSnapshot(server.getServerInfo().getServerName(),
         SnapshotStatus.RS_READY);
-    zkWrapper.removeRSForSnapshot(server.getServerInfo().getServerName(), 
+    zkWrapper.removeRSForSnapshot(server.getServerInfo().getServerName(),
         SnapshotStatus.RS_FINISH);
   }
 }

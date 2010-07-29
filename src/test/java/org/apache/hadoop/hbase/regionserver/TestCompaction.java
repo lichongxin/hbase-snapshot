@@ -27,6 +27,7 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.HBaseTestCase;
+import org.apache.hadoop.hbase.HBaseTestingUtility;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.KeyValue;
@@ -37,7 +38,6 @@ import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.io.hfile.HFileScanner;
 import org.apache.hadoop.hbase.util.Bytes;
-import org.apache.hadoop.hdfs.MiniDFSCluster;
 
 
 /**
@@ -53,7 +53,7 @@ public class TestCompaction extends HBaseTestCase {
   private static final byte [] COLUMN_FAMILY_TEXT = COLUMN_FAMILY;
   private static final int COMPACTION_THRESHOLD = MAXVERSIONS;
 
-  private MiniDFSCluster cluster;
+  private HBaseTestingUtility TEST_UTIL = new HBaseTestingUtility();
 
   /** constructor */
   public TestCompaction() {
@@ -62,15 +62,11 @@ public class TestCompaction extends HBaseTestCase {
     // Set cache flush size to 1MB
     conf.setInt("hbase.hregion.memstore.flush.size", 1024*1024);
     conf.setInt("hbase.hregion.memstore.block.multiplier", 10);
-    this.cluster = null;
   }
 
   @Override
   public void setUp() throws Exception {
-    this.cluster = new MiniDFSCluster(conf, 2, true, (String[])null);
-    // Make the hbase rootdir match the minidfs we just span up
-    this.conf.set(HConstants.HBASE_DIR,
-      this.cluster.getFileSystem().getHomeDirectory().toString());
+    TEST_UTIL.startMiniCluster();
     super.setUp();
     HTableDescriptor htd = createTableDescriptor(getName());
     this.r = createNewHRegion(htd, null, null);
@@ -81,9 +77,7 @@ public class TestCompaction extends HBaseTestCase {
     HLog hlog = r.getLog();
     this.r.close();
     hlog.closeAndDelete();
-    if (this.cluster != null) {
-      shutdownDfs(cluster);
-    }
+    TEST_UTIL.shutdownMiniCluster();
     super.tearDown();
   }
 

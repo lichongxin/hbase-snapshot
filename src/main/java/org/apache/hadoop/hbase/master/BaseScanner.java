@@ -19,6 +19,13 @@
  */
 package org.apache.hadoop.hbase.master;
 
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
+
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.FileStatus;
@@ -41,16 +48,10 @@ import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.Store;
 import org.apache.hadoop.hbase.regionserver.StoreFile;
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.hbase.util.FSUtils;
 import org.apache.hadoop.hbase.util.Writables;
 import org.apache.hadoop.io.BooleanWritable;
 import org.apache.hadoop.ipc.RemoteException;
-
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 
 /**
@@ -170,11 +171,13 @@ abstract class BaseScanner extends Chore {
     // are in place.
     Map<HRegionInfo, Result> splitParents = new HashMap<HRegionInfo, Result>();
     List<byte []> emptyRows = new ArrayList<byte []>();
+    List<Result> referenceRows = new ArrayList<Result>();
     int rows = 0;
     try {
       regionServer =
         this.master.getServerConnection().getHRegionConnection(region.getServer());
-      Scan s = new Scan().addFamily(HConstants.CATALOG_FAMILY);
+      Scan s = new Scan().addFamily(HConstants.CATALOG_FAMILY).addFamily(
+          HConstants.SNAPSHOT_FAMILY);
       // Make this scan do a row at a time otherwise, data can be stale.
       s.setCaching(1);
       scannerId = regionServer.openScanner(region.getRegionName(), s);
@@ -184,7 +187,10 @@ abstract class BaseScanner extends Chore {
           break;
         }
         HRegionInfo info = master.getHRegionInfo(values.getRow(), values);
-        if (info == null) {
+        // this is a row for reference count information
+        if (Bytes.startsWith(values.getRow(), HConstants.SNAPSHOT_ROW_PREFIX)) {
+          referenceRows.add(values);
+        } else if (info == null) {
           emptyRows.add(values.getRow());
           continue;
         }
@@ -240,6 +246,15 @@ abstract class BaseScanner extends Chore {
         HRegionInfo hri = e.getKey();
         cleanupAndVerifySplits(region.getRegionName(), regionServer,
           hri, e.getValue());
+      }
+    }
+
+    // check the reference count information, delete the archived HFiles
+    // whose reference count is 0
+    if (referenceRows.size() > 0) {
+      for (Result values : referenceRows) {
+        checkHFilesReference(region.getRegionName(), regionServer, values,
+            master.getArchiveDir());
       }
     }
     LOG.info(Thread.currentThread().getName() + " scan of " + rows +
@@ -309,8 +324,8 @@ abstract class BaseScanner extends Chore {
       LOG.info("Deleting region " + parent.getRegionNameAsString() +
         " (encoded=" + parent.getEncodedName() +
         ") because daughter splits no longer hold references");
-      HRegion.deleteRegion(this.master.getFileSystem(),
-        this.master.getRootDir(), parent);
+      HRegion.deleteRegion(this.master.getFileSystem(), this.master.getRootDir(),
+          this.master.getArchiveDir(), parent);
       HRegion.removeRegionFromMETA(srvr, metaRegionName,
         parent.getRegionName());
       result = true;
@@ -523,6 +538,32 @@ abstract class BaseScanner extends Chore {
       removeDaughterFromParent(metaRegionName, srvr, parent, split, qualifier);
     }
     return result;
+  }
+
+  /*
+   * Check the reference count information for HFiles. If the reference count
+   * of a HFile is 0, update the .META. first and then delete it from the file
+   * system if it is an archived file.
+   */
+  private void checkHFilesReference(final byte [] metaRegionName,
+      final HRegionInterface srvr, final Result values, final Path archiveDir)
+      throws IOException {
+    Map<byte[], byte[]> filesRefCount = values.getFamilyMap(HConstants.SNAPSHOT_FAMILY);
+    for (Map.Entry<byte[], byte[]> e : filesRefCount.entrySet()) {
+      if (Bytes.toLong(e.getValue()) <= 0) {
+        LOG.info("Found archived HFile whose reference <= 0: "
+            + Bytes.toString(e.getKey()));
+        // 1. delete the file reference information from .META.
+        Delete delete = new Delete(values.getRow());
+        delete.deleteColumn(HConstants.SNAPSHOT_FAMILY, e.getKey());
+        srvr.delete(metaRegionName, delete);
+
+        // 2. delete the archived file
+        Path filePath = new Path(Bytes.toString(e.getKey()));
+        Path fileArchivePath = FSUtils.getHFileArchivePath(filePath, archiveDir);
+        master.getFileSystem().delete(fileArchivePath, true);
+      }
+    }
   }
 
   /*

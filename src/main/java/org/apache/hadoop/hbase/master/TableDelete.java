@@ -61,17 +61,14 @@ class TableDelete extends TableOperation {
       // Delete the region
       try {
         HRegion.removeRegionFromMETA(server, m.getRegionName(), i.getRegionName());
-        HRegion.deleteRegion(this.master.getFileSystem(),
-          this.master.getRootDir(), i);
+        HRegion.deleteRegion(this.master.getFileSystem(), this.master.getRootDir(),
+            this.master.getArchiveDir(), i);
 
       } catch (IOException e) {
         LOG.error("failed to delete region " + Bytes.toString(i.getRegionName()),
           RemoteExceptionHandler.checkIOException(e));
       }
     }
-    
-    // archive table files that are used by snapshots
-    // TODO
 
     // delete the table's folder from fs.
     this.master.getFileSystem().delete(new Path(this.master.getRootDir(),

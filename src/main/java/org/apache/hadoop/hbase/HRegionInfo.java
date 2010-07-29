@@ -128,6 +128,7 @@ public class HRegionInfo extends VersionedWritable implements WritableComparable
   private String regionNameStr = "";
   private boolean split = false;
   private byte [] startKey = HConstants.EMPTY_BYTE_ARRAY;
+  private byte[] referenceMetaRow = null;
   protected HTableDescriptor tableDesc = null;
   private int hashCode = -1;
   //TODO: Move NO_HASH to HStoreFile which is really the only place it is used.
@@ -401,6 +402,22 @@ public class HRegionInfo extends VersionedWritable implements WritableComparable
   /** @return the endKey */
   public byte [] getEndKey(){
     return endKey;
+  }
+
+  /**
+   * @return the .META. row key for which contains the reference count
+   * information of this region
+   */
+  public byte[] getReferenceMetaRow() {
+    if (referenceMetaRow == null) {
+      /*
+       * reference count information is not stored in the original meta row for this
+       * region but in a separate row whose row key is prefixed by ".SNAPSHOT."
+       * This can be seen as a virtual table ".SNAPSHOT."
+       */
+      referenceMetaRow = Bytes.add(HConstants.SNAPSHOT_ROW_PREFIX, regionName);
+    }
+    return referenceMetaRow;
   }
 
   /**

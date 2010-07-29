@@ -47,6 +47,7 @@ import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.ResultScanner;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.master.HMaster;
+import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.HRegionServer;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.FSUtils;
@@ -953,5 +954,40 @@ public class HBaseTestingUtility {
       LOG.info("Found=" + rows);
       Threads.sleep(1000); 
     }
+  }
+
+  /**
+   * Create a single region instance for a table.
+   *
+   * @param tableName
+   * @param rootDir hbase testing root directory
+   * @param families column families of the table
+   * @return HRegion instance
+   * @throws IOException
+   */
+  public HRegion createHRegion(final byte [] tableName, final Path rootDir,
+    byte [] ... families) throws IOException{
+      HTableDescriptor htd = new HTableDescriptor(tableName);
+      for(byte [] family : families) {
+        htd.addFamily(new HColumnDescriptor(family));
+      }
+      HRegionInfo info = new HRegionInfo(htd, null, null, false);
+      return HRegion.createHRegion(info, rootDir, conf);
+  }
+
+  /**
+   * Open a closed region, e.g. regions after split
+   *
+   * @param closedRegion region to be opened
+   * @return The opened region
+   * @throws IOException
+   */
+  public HRegion openClosedRegion(final HRegion closedRegion)
+  throws IOException {
+    HRegion r = new HRegion(closedRegion.getTableDir(), closedRegion.getLog(),
+        closedRegion.getFilesystem(), closedRegion.getConf(),
+        closedRegion.getRegionInfo(), null);
+    r.initialize();
+    return r;
   }
 }

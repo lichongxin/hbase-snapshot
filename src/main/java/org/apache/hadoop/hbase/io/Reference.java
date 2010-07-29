@@ -63,17 +63,17 @@ public class Reference implements Writable {
     top       (1),
     /** StoreFile contains lower half of key range */
     bottom    (2);
-    
+
     private final byte value;
-    
+
     private Range(final int intValue) {
       this.value = (byte)intValue;
     }
-    
+
     public byte getByteValue() {
       return value;
     }
-    
+
     public static Range fromByte(byte value) {
       switch(value) {
       case 0:
@@ -82,7 +82,7 @@ public class Reference implements Writable {
         return Range.top;
       case 2:
         return Range.bottom;
-        
+
       default:
           throw new RuntimeException("Invalid byte value for Reference.Range");
       }
