@@ -108,7 +108,7 @@ public class TestZKSnapshotWatcher {
   }
 
   @Test
-  public void testSnapshotForRS() throws IOException, InterruptedException {
+  public void testHandleSnapshotStart() throws IOException, InterruptedException {
     // start creating a snapshot for testtable
     byte[] snapshotName = Bytes.toBytes("snapshot1");
     HSnapshotDescriptor hsd = new HSnapshotDescriptor(snapshotName, TABLENAME);
