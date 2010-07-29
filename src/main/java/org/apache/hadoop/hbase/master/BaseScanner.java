@@ -21,9 +21,10 @@ package org.apache.hadoop.hbase.master;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.NavigableMap;
+import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.commons.logging.Log;
@@ -169,7 +170,8 @@ abstract class BaseScanner extends Chore {
     // Array to hold list of split parents found.  Scan adds to list.  After
     // scan we go check if parents can be removed and that their daughters
     // are in place.
-    Map<HRegionInfo, Result> splitParents = new HashMap<HRegionInfo, Result>();
+    NavigableMap<HRegionInfo, Result> splitParents =
+      new TreeMap<HRegionInfo, Result>();
     List<byte []> emptyRows = new ArrayList<byte []>();
     List<Result> referenceRows = new ArrayList<Result>();
     int rows = 0;
@@ -322,8 +324,7 @@ abstract class BaseScanner extends Chore {
         parent, rowContent, HConstants.SPLITB_QUALIFIER);
     if (!hasReferencesA && !hasReferencesB) {
       LOG.info("Deleting region " + parent.getRegionNameAsString() +
-        " (encoded=" + parent.getEncodedName() +
-        ") because daughter splits no longer hold references");
+        " because daughter splits no longer hold references");
       HRegion.deleteRegion(this.master.getFileSystem(), this.master.getRootDir(),
           this.master.getArchiveDir(), parent);
       HRegion.removeRegionFromMETA(srvr, metaRegionName,
@@ -484,7 +485,7 @@ abstract class BaseScanner extends Chore {
     final HRegionInfo split, final byte [] qualifier)
   throws IOException {
     if (LOG.isDebugEnabled()) {
-      LOG.debug(split.getRegionNameAsString() + "/" + split.getEncodedName() +
+      LOG.debug(split.getRegionNameAsString() +
         " no longer has references to " + parent.getRegionNameAsString());
     }
     Delete delete = new Delete(parent.getRegionName());

@@ -154,17 +154,17 @@ class StoreScanner implements KeyValueScanner, InternalScanner, ChangedReadersOb
     List<KeyValueScanner> scanners =
       new ArrayList<KeyValueScanner>(sfScanners.size()+1);
 
-    // exclude scan files that have failed file filters
+    // include only those scan files which pass all filters
     for (StoreFileScanner sfs : sfScanners) {
-      if (isGet &&
-          !sfs.shouldSeek(scan.getStartRow(), columns)) {
-        continue; // exclude this hfs
+      if (sfs.shouldSeek(scan, columns)) {
+        scanners.add(sfs);
       }
-      scanners.add(sfs);
     }
 
     // Then the memstore scanners
-    scanners.addAll(this.store.memstore.getScanners());
+    if (this.store.memstore.shouldSeek(scan)) {
+      scanners.addAll(this.store.memstore.getScanners());
+    }
     return scanners;
   }
 
@@ -227,11 +227,16 @@ class StoreScanner implements KeyValueScanner, InternalScanner, ChangedReadersOb
       return false;
     }
 
-    matcher.setRow(peeked.getRow());
+    // only call setRow if the row changes; avoids confusing the query matcher
+    // if scanning intra-row
+    if ((matcher.row == null) || !peeked.matchingRow(matcher.row)) {
+      matcher.setRow(peeked.getRow());
+    }
+
     KeyValue kv;
     List<KeyValue> results = new ArrayList<KeyValue>();
     LOOP: while((kv = this.heap.peek()) != null) {
-      QueryMatcher.MatchCode qcode = matcher.match(kv);
+      ScanQueryMatcher.MatchCode qcode = matcher.match(kv);
       //DebugPrint.println("SS peek kv = " + kv + " with qcode = " + qcode);
       switch(qcode) {
         case INCLUDE:
@@ -256,6 +261,10 @@ class StoreScanner implements KeyValueScanner, InternalScanner, ChangedReadersOb
           return false;
 
         case SEEK_NEXT_ROW:
+          if (!matcher.moreRowsMayExistAfter(kv)) {
+            outResult.addAll(results);
+            return false;
+          }
           heap.next();
           break;
 

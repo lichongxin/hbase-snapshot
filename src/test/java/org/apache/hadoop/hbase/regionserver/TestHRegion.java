@@ -51,6 +51,7 @@ import org.apache.hadoop.hbase.regionserver.wal.HLog;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.EnvironmentEdgeManagerTestHelper;
 import org.apache.hadoop.hbase.util.IncrementingEnvironmentEdge;
+import org.apache.hadoop.hbase.util.ManualEnvironmentEdge;
 import org.apache.hadoop.hbase.util.Pair;
 import org.apache.hadoop.hbase.util.Threads;
 
@@ -361,7 +362,7 @@ public class TestHRegion extends HBaseTestCase {
       assertEquals(OperationStatusCode.SUCCESS, codes[i]);
     }
     assertEquals(1, HLog.getSyncOps());
-    
+
     LOG.info("Next a batch put with one invalid family");
     puts[5].add(Bytes.toBytes("BAD_CF"), qual, val);
     codes = this.region.put(puts);
@@ -371,7 +372,7 @@ public class TestHRegion extends HBaseTestCase {
         OperationStatusCode.SUCCESS, codes[i]);
     }
     assertEquals(1, HLog.getSyncOps());
-    
+
     LOG.info("Next a batch put that has to break into two batches to avoid a lock");
     Integer lockedRow = region.obtainRowLock(Bytes.toBytes("row_2"));
 
@@ -396,7 +397,7 @@ public class TestHRegion extends HBaseTestCase {
       if (System.currentTimeMillis() - startWait > 10000) {
         fail("Timed out waiting for thread to sync first minibatch");
       }
-    }    
+    }
     LOG.info("...releasing row lock, which should let put thread continue");
     region.releaseRowLock(lockedRow);
     LOG.info("...joining on thread");
@@ -408,7 +409,7 @@ public class TestHRegion extends HBaseTestCase {
       assertEquals((i == 5) ? OperationStatusCode.BAD_FAMILY :
         OperationStatusCode.SUCCESS, codes[i]);
     }
-    
+
     LOG.info("Nexta, a batch put which uses an already-held lock");
     lockedRow = region.obtainRowLock(Bytes.toBytes("row_2"));
     LOG.info("...obtained row lock");
@@ -427,13 +428,13 @@ public class TestHRegion extends HBaseTestCase {
     }
     // Make sure we didn't do an extra batch
     assertEquals(1, HLog.getSyncOps());
-    
+
     // Make sure we still hold lock
     assertTrue(region.isRowLocked(lockedRow));
     LOG.info("...releasing lock");
     region.releaseRowLock(lockedRow);
   }
-  
+
   //////////////////////////////////////////////////////////////////////////////
   // checkAndMutate tests
   //////////////////////////////////////////////////////////////////////////////
@@ -834,7 +835,7 @@ public class TestHRegion extends HBaseTestCase {
     result = region.get(get, null);
     assertEquals(0, result.size());
   }
-  
+
   /**
    * Tests that the special LATEST_TIMESTAMP option for puts gets
    * replaced by the actual timestamp
@@ -863,7 +864,7 @@ public class TestHRegion extends HBaseTestCase {
     LOG.info("Got: " + kv);
     assertTrue("LATEST_TIMESTAMP was not replaced with real timestamp",
         kv.getTimestamp() != HConstants.LATEST_TIMESTAMP);
-    
+
     // Check same with WAL enabled (historically these took different
     // code paths, so check both)
     row = Bytes.toBytes("row2");
@@ -1367,6 +1368,7 @@ public class TestHRegion extends HBaseTestCase {
     String method = this.getName();
     initHRegion(tableName, method, families);
 
+
     //Putting data in Region
     Put put = new Put(row1);
     put.add(fam1, null, null);
@@ -1384,10 +1386,12 @@ public class TestHRegion extends HBaseTestCase {
     scan.addFamily(fam2);
     scan.addFamily(fam4);
     is = (RegionScanner) region.getScanner(scan);
+    ReadWriteConsistencyControl.resetThreadReadPoint(region.getRWCC());
     assertEquals(1, ((RegionScanner)is).storeHeap.getHeap().size());
 
     scan = new Scan();
     is = (RegionScanner) region.getScanner(scan);
+    ReadWriteConsistencyControl.resetThreadReadPoint(region.getRWCC());
     assertEquals(families.length -1,
         ((RegionScanner)is).storeHeap.getHeap().size());
   }
@@ -1856,6 +1860,7 @@ public class TestHRegion extends HBaseTestCase {
     assertEquals(value+amount, result);
 
     Store store = region.getStore(fam1);
+    // ICV removes any extra values floating around in there.
     assertEquals(1, store.memstore.kvset.size());
     assertTrue(store.memstore.snapshot.isEmpty());
 
@@ -1863,6 +1868,8 @@ public class TestHRegion extends HBaseTestCase {
   }
 
   public void testIncrementColumnValue_BumpSnapshot() throws IOException {
+    ManualEnvironmentEdge mee = new ManualEnvironmentEdge();
+    EnvironmentEdgeManagerTestHelper.injectEdge(mee);
     initHRegion(tableName, getName(), fam1);
 
     long value = 42L;
@@ -2655,7 +2662,52 @@ public class TestHRegion extends HBaseTestCase {
 
   }
 
+  //////////////////////////////////////////////////////////////////////////////
+  // Bloom filter test
+  //////////////////////////////////////////////////////////////////////////////
 
+  public void testAllColumnsWithBloomFilter() throws IOException {
+    byte [] TABLE = Bytes.toBytes("testAllColumnsWithBloomFilter");
+    byte [] FAMILY = Bytes.toBytes("family");
+
+    //Create table
+    HColumnDescriptor hcd = new HColumnDescriptor(FAMILY, Integer.MAX_VALUE,
+        HColumnDescriptor.DEFAULT_COMPRESSION,
+        HColumnDescriptor.DEFAULT_IN_MEMORY,
+        HColumnDescriptor.DEFAULT_BLOCKCACHE,
+        Integer.MAX_VALUE, HColumnDescriptor.DEFAULT_TTL,
+        "rowcol",
+        HColumnDescriptor.DEFAULT_REPLICATION_SCOPE);
+    HTableDescriptor htd = new HTableDescriptor(TABLE);
+    htd.addFamily(hcd);
+    HRegionInfo info = new HRegionInfo(htd, null, null, false);
+    Path path = new Path(DIR + "testAllColumnsWithBloomFilter");
+    region = HRegion.createHRegion(info, path, conf);
+
+    // For row:0, col:0: insert versions 1 through 5.
+    byte row[] = Bytes.toBytes("row:" + 0);
+    byte column[] = Bytes.toBytes("column:" + 0);
+    Put put = new Put(row);
+    for (long idx = 1; idx <= 4; idx++) {
+      put.add(FAMILY, column, idx, Bytes.toBytes("value-version-" + idx));
+    }
+    region.put(put);
+
+    //Flush
+    region.flushcache();
+
+    //Get rows
+    Get get = new Get(row);
+    get.setMaxVersions();
+    KeyValue[] kvs = region.get(get, null).raw();
+
+    //Check if rows are correct
+    assertEquals(4, kvs.length);
+    checkOneCell(kvs[0], FAMILY, 0, 0, 4);
+    checkOneCell(kvs[1], FAMILY, 0, 0, 3);
+    checkOneCell(kvs[2], FAMILY, 0, 0, 2);
+    checkOneCell(kvs[3], FAMILY, 0, 0, 1);
+  }
 
   private void putData(int startRow, int numRows, byte [] qf,
       byte [] ...families)
@@ -2781,4 +2833,24 @@ public class TestHRegion extends HBaseTestCase {
     Path path = new Path(DIR + callingMethod);
     region = HRegion.createHRegion(info, path, conf);
   }
+
+  /**
+   * Assert that the passed in KeyValue has expected contents for the
+   * specified row, column & timestamp.
+   */
+  private void checkOneCell(KeyValue kv, byte[] cf,
+                             int rowIdx, int colIdx, long ts) {
+    String ctx = "rowIdx=" + rowIdx + "; colIdx=" + colIdx + "; ts=" + ts;
+    assertEquals("Row mismatch which checking: " + ctx,
+                 "row:"+ rowIdx, Bytes.toString(kv.getRow()));
+    assertEquals("ColumnFamily mismatch while checking: " + ctx,
+                 Bytes.toString(cf), Bytes.toString(kv.getFamily()));
+    assertEquals("Column qualifier mismatch while checking: " + ctx,
+                 "column:" + colIdx, Bytes.toString(kv.getQualifier()));
+    assertEquals("Timestamp mismatch while checking: " + ctx,
+                 ts, kv.getTimestamp());
+    assertEquals("Value mismatch while checking: " + ctx,
+                 "value-version-" + ts, Bytes.toString(kv.getValue()));
+  }
+
 }

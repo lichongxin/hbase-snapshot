@@ -84,11 +84,12 @@ public class TestReplication {
     // smaller block size and capacity to trigger more operations
     // and test them
     conf1.setInt("hbase.regionserver.hlog.blocksize", 1024*20);
-    conf1.setInt("replication.source.nb.capacity", 5);
+    conf1.setInt("replication.source.size.capacity", 1024);
     conf1.setLong("replication.source.sleepforretries", 100);
     conf1.setInt("hbase.regionserver.maxlogs", 10);
     conf1.setLong("hbase.master.logcleaner.ttl", 10);
-    conf1.setLong("hbase.client.retries.number", 4);
+    conf1.setLong("hbase.client.retries.number", 5);
+    conf1.setLong("hbase.regions.percheckin", 1);
     conf1.setBoolean(HConstants.REPLICATION_ENABLE_KEY, true);
     conf1.setBoolean("dfs.support.append", true);
     conf1.setLong(HConstants.THREAD_WAKE_FREQUENCY, 100);
@@ -110,6 +111,7 @@ public class TestReplication {
     conf2.setInt("hbase.client.retries.number", 6);
     conf2.setBoolean(HConstants.REPLICATION_ENABLE_KEY, true);
     conf2.setBoolean("dfs.support.append", true);
+    conf2.setLong("hbase.regions.percheckin", 1);
 
     utility2 = new HBaseTestingUtility(conf2);
     utility2.setZkCluster(miniZK);
@@ -141,7 +143,7 @@ public class TestReplication {
     admin2.createTable(table);
 
     htable1 = new HTable(conf1, tableName);
-    htable1.setWriteBufferSize(1024*5);
+    htable1.setWriteBufferSize(1024);
     htable2 = new HTable(conf2, tableName);
   }
 

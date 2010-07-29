@@ -25,6 +25,8 @@ Release 0.21.0 - Unreleased
    HBASE-2565  Remove contrib module from hbase
    HBASE-2397  Bytes.toStringBinary escapes printable chars
    HBASE-2771  Update our hadoop jar to be latest from 0.20-append branch
+   HBASE-2803  Remove remaining Get code from Store.java,etc
+   HBASE-2553  Revisit IncrementColumnValue implementation in 0.22
 
   BUG FIXES
    HBASE-1791  Timeout in IndexRecordWriter (Bradford Stephens via Andrew
@@ -430,6 +432,31 @@ Release 0.21.0 - Unreleased
                (Benoit Sigoure via Stack)
    HBASE-2806  (small compile fix via jgray)
    HBASE-2797  Another NPE in ReadWriteConsistencyControl
+   HBASE-2831  Fix '$bin' path duplication in setup scripts
+               (Nicolas Spiegelberg via Stack)
+   HBASE-2781  ZKW.createUnassignedRegion doesn't make sure existing znode is 
+               in the right state (Karthik Ranganathan via JD)
+   HBASE-2727  Splits writing one file only is untenable; need dir of recovered
+               edits ordered by sequenceid
+   HBASE-2843  Readd bloomfilter test over zealously removed by HBASE-2625 
+   HBASE-2846  Make rest server be same as thrift and avro servers
+   HBASE-1511  Pseudo distributed mode in LocalHBaseCluster
+               (Nicolas Spiegelberg via Stack)
+   HBASE-2851  Remove testDynamicBloom() unit test
+               (Nicolas Spiegelberg via Stack)
+   HBASE-2853  TestLoadIncrementalHFiles fails on TRUNK
+   HBASE-2854  broken tests on trunk         
+   HBASE-2859  Cleanup deprecated stuff in TestHLog (Alex Newman via Stack)
+   HBASE-2858  TestReplication.queueFailover fails half the time
+   HBASE-2863  HBASE-2553 removed an important edge case
+   HBASE-2866  Region permanently offlined
+   HBASE-2849  HBase clients cannot recover when their ZooKeeper session
+               becomes invalid (Benôit Sigoure via Stack)
+   HBASE-2876  HBase hbck: false positive error reported for parent regions
+               that are in offline state in meta after a split
+   HBASE-2815  not able to run the test suite in background because TestShell
+               gets suspended on tty output (Alexey Kovyrin via Stack)
+   HBASE-2852  Bloom filter NPE (pranav via jgray)
 
   IMPROVEMENTS
    HBASE-1760  Cleanup TODOs in HTable
@@ -755,8 +782,34 @@ Release 0.21.0 - Unreleased
    HBASE-2786  TestHLog.testSplit hangs (Nicolas Spiegelberg via JD)
    HBASE-2790  Purge apache-forrest from TRUNK
    HBASE-2793  Add ability to extract a specified list of versions of a column 
-   	       in a single roundtrip (Kannan via Ryan)
-   HBASE-2792  Create a better way to chain log cleaners
+               in a single roundtrip (Kannan via Ryan)
+   HBASE-2828  HTable unnecessarily coupled with HMaster
+               (Nicolas Spiegelberg via Stack)
+   HBASE-2265  HFile and Memstore should maintain minimum and maximum timestamps
+               (Pranav via Ryan)
+   HBASE-2836  Speed mvn site building by removing generation of useless reports
+   HBASE-2808  Document the implementation of replication
+   HBASE-2517  During reads when passed the specified time range, seek to
+               next column (Pranav via jgray)
+   HBASE-2835  Update hadoop jar to head of branch-0.20-append to catch three
+               added patches
+   HBASE-2840  Remove the final remnants of the old Get code - the query matchers 
+               and other helper classes
+   HBASE-2845  Small edit of shell main help page cutting down some on white
+               space and text
+   HBASE-2850  slf4j version needs to be reconciled in pom: thrift wants 1.5.x
+               and hadoop/avro 1.4.x
+   HBASE-2865  Cleanup of LRU logging; its hard to read, uses custom MB'maker,
+               repeats info, too many numbers after the point, etc.
+   HBASE-2869  Regularize how we log sequenceids -- sometimes its myseqid,
+               other times its sequence id, etc.
+   HBASE-2873  Minor clean up in basescanner; fix a log and make deletes of
+               region processing run in order
+   HBASE-2830  NotServingRegionException shouldn't log a stack trace
+   HBASE-2874  Unnecessary double-synchronization in ZooKeeperWrapper
+               (Benoît Sigoure via Stack)
+   HBASE-2879  Offer ZK CLI outside of HBase Shell
+               (Nicolas Spiegelberg via Stack)
 
   NEW FEATURES
    HBASE-1961  HBase EC2 scripts
@@ -801,6 +854,9 @@ Release 0.21.0 - Unreleased
    HBASE-7     Provide a HBase checker and repair tool similar to fsck
                (dhruba borthakur via Stack)
    HBASE-2223  Handle 10min+ network partitions between clusters
+   HBASE-2862  Name DFSClient for Improved Debugging
+               (Nicolas Spiegelberg via Stack)
+   HBASE-2838  Replication metrics
 
   OPTIMIZATIONS
    HBASE-410   [testing] Speed up the test suite

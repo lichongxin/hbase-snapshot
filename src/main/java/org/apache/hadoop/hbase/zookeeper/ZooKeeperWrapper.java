@@ -61,39 +61,39 @@ import org.apache.zookeeper.data.Stat;
  * This class provides methods to:
  * - read/write/delete the root region location in ZooKeeper.
  * - set/check out of safe mode flag.
- * 
+ *
  * ------------------------------------------
  * The following STATIC ZNodes are created:
  * ------------------------------------------
- * - parentZNode     : All the HBase directories are hosted under this parent 
+ * - parentZNode     : All the HBase directories are hosted under this parent
  *                     node, default = "/hbase"
- * - rsZNode         : This is the directory where the RS's create ephemeral 
- *                     nodes. The master watches these nodes, and their expiry 
+ * - rsZNode         : This is the directory where the RS's create ephemeral
+ *                     nodes. The master watches these nodes, and their expiry
  *                     indicates RS death. The default location is "/hbase/rs"
- * 
+ *
  * ------------------------------------------
  * The following DYNAMIC ZNodes are created:
  * ------------------------------------------
  * - rootRegionZNode     : Specifies the RS hosting root.
- * - masterElectionZNode : ZNode used for election of the primary master when 
- *                         there are secondaries. All the masters race to write 
- *                         their addresses into this location, the one that 
+ * - masterElectionZNode : ZNode used for election of the primary master when
+ *                         there are secondaries. All the masters race to write
+ *                         their addresses into this location, the one that
  *                         succeeds is the primary. Others block.
- * - clusterStateZNode   : Determines if the cluster is running. Its default 
- *                         location is "/hbase/shutdown". It always has a value 
- *                         of "up". If present with the valus, cluster is up 
- *                         and running. If deleted, the cluster is shutting 
+ * - clusterStateZNode   : Determines if the cluster is running. Its default
+ *                         location is "/hbase/shutdown". It always has a value
+ *                         of "up". If present with the valus, cluster is up
+ *                         and running. If deleted, the cluster is shutting
  *                         down.
- * - rgnsInTransitZNode  : All the nodes under this node are names of regions 
- *                         in transition. The first byte of the data for each 
- *                         of these nodes is the event type. This is used to 
+ * - rgnsInTransitZNode  : All the nodes under this node are names of regions
+ *                         in transition. The first byte of the data for each
+ *                         of these nodes is the event type. This is used to
  *                         deserialize the rest of the data.
  */
 public class ZooKeeperWrapper implements Watcher {
   protected static final Log LOG = LogFactory.getLog(ZooKeeperWrapper.class);
 
   // instances of the watcher
-  private static Map<String,ZooKeeperWrapper> INSTANCES = 
+  private static Map<String,ZooKeeperWrapper> INSTANCES =
     new HashMap<String,ZooKeeperWrapper>();
   // lock for ensuring a singleton per instance type
   private static Lock createLock = new ReentrantLock();
@@ -115,13 +115,13 @@ public class ZooKeeperWrapper implements Watcher {
    * Specifies the RS hosting root
    */
   private final String rootRegionZNode;
-  /* 
-   * This is the directory where the RS's create ephemeral nodes. The master 
-   * watches these nodes, and their expiry indicates RS death. 
+  /*
+   * This is the directory where the RS's create ephemeral nodes. The master
+   * watches these nodes, and their expiry indicates RS death.
    */
   private final String rsZNode;
   /*
-   * ZNode used for election of the primary master when there are secondaries. 
+   * ZNode used for election of the primary master when there are secondaries.
    */
   private final String masterElectionZNode;
   /*
@@ -130,7 +130,7 @@ public class ZooKeeperWrapper implements Watcher {
   public final String clusterStateZNode;
   /*
    * Regions that are in transition
-   */  
+   */
   private final String rgnsInTransitZNode;
   /*
    * Snapshot root znode
@@ -151,7 +151,7 @@ public class ZooKeeperWrapper implements Watcher {
    */
   private Set<String> unassignedZNodesWatched = new HashSet<String>();
 
-  private List<Watcher> listeners = Collections.synchronizedList(new ArrayList<Watcher>());
+  private List<Watcher> listeners = new ArrayList<Watcher>();
 
   // return the singleton given the name of the instance
   public static ZooKeeperWrapper getInstance(Configuration conf, String name) {
@@ -202,7 +202,7 @@ public class ZooKeeperWrapper implements Watcher {
     }
     sessionTimeout = conf.getInt("zookeeper.session.timeout", 60 * 1000);
     reconnectToZk();
-    
+
     parentZNode = conf.get(HConstants.ZOOKEEPER_ZNODE_PARENT, HConstants.DEFAULT_ZOOKEEPER_ZNODE_PARENT);
 
     String rootServerZNodeName = conf.get("zookeeper.znode.rootserver", "root-region-server");
@@ -223,7 +223,7 @@ public class ZooKeeperWrapper implements Watcher {
     snapshotReadyZNode  = getZNode(snapshotRootZNode, snapshotReadyZNodeName);
     snapshotFinishZNode  = getZNode(snapshotRootZNode, snapshotFinishZNodeName);
   }
-  
+
   public void reconnectToZk() throws IOException {
     try {
       LOG.info("Reconnecting to zookeeper");
@@ -239,7 +239,7 @@ public class ZooKeeperWrapper implements Watcher {
     } catch (InterruptedException e) {
       LOG.error("<" + instanceName + ">" + "Error closing ZK connection: " + e);
       throw new IOException(e);
-    }    
+    }
   }
 
   public synchronized void registerListener(Watcher watcher) {
@@ -772,6 +772,21 @@ public class ZooKeeperWrapper implements Watcher {
     }
   }
 
+  /**
+   * @return the number of region server znodes in the RS directory
+   */
+  public int getRSDirectoryCount() {
+    Stat stat = null;
+    try {
+      stat = zooKeeper.exists(rsZNode, false);
+    } catch (KeeperException e) {
+      LOG.warn("Problem getting stats for " + rsZNode, e);
+    } catch (InterruptedException e) {
+      LOG.warn("Problem getting stats for " + rsZNode, e);
+    }
+    return (stat != null) ? stat.getNumChildren() : 0;
+  }
+
   private boolean checkExistenceOf(String path) {
     Stat stat = null;
     try {
@@ -869,9 +884,9 @@ public class ZooKeeperWrapper implements Watcher {
     }
     try {
       if (checkExistenceOf(znode)) {
-        nodes = zooKeeper.getChildren(znode, this);
+        nodes = zooKeeper.getChildren(znode, watcher);
         for (String node : nodes) {
-          getDataAndWatch(znode, node, this);
+          getDataAndWatch(znode, node, watcher);
         }
       }
     } catch (KeeperException e) {
@@ -1080,11 +1095,19 @@ public class ZooKeeperWrapper implements Watcher {
         throw new IOException(e);
       }
     }
-  
-  public void createUnassignedRegion(String regionName, byte[] data) {
+
+  /**
+   * Given a region name and some data, this method creates a new the region
+   * znode data under the UNASSGINED znode with the data passed in. This method
+   * will not update data for existing znodes.
+   *
+   * @param regionName - encoded name of the region
+   * @param data - new serialized data to update the region znode
+   */
+  private void createUnassignedRegion(String regionName, byte[] data) {
     String znode = getZNode(getRegionInTransitionZNode(), regionName);
     if(LOG.isDebugEnabled()) {
-      // check if this node already exists - 
+      // check if this node already exists -
       //   - it should not exist
       //   - if it does, it should be in the CLOSED state
       if(exists(znode, true)) {
@@ -1096,7 +1119,7 @@ public class ZooKeeperWrapper implements Watcher {
           LOG.error("Error reading data for " + znode);
         }
         if(oldData == null) {
-          LOG.debug("While creating UNASSIGNED region " + regionName + " exists with no data" );          
+          LOG.debug("While creating UNASSIGNED region " + regionName + " exists with no data" );
         }
         else {
           LOG.debug("While creating UNASSIGNED region " + regionName + " exists, state = " + (HBaseEventType.fromByte(oldData[0])));
@@ -1104,7 +1127,7 @@ public class ZooKeeperWrapper implements Watcher {
       }
       else {
         if(data == null) {
-          LOG.debug("Creating UNASSIGNED region " + regionName + " with no data" );          
+          LOG.debug("Creating UNASSIGNED region " + regionName + " with no data" );
         }
         else {
           LOG.debug("Creating UNASSIGNED region " + regionName + " in state = " + (HBaseEventType.fromByte(data[0])));
@@ -1114,6 +1137,80 @@ public class ZooKeeperWrapper implements Watcher {
     synchronized(unassignedZNodesWatched) {
       unassignedZNodesWatched.add(znode);
       createZNodeIfNotExists(znode, data, CreateMode.PERSISTENT, true);
+    }
+  }
+
+  /**
+   * Given a region name and some data, this method updates the region znode
+   * data under the UNASSGINED znode with the latest data. This method will
+   * update the znode data only if it already exists.
+   *
+   * @param regionName - encoded name of the region
+   * @param data - new serialized data to update the region znode
+   */
+  public void updateUnassignedRegion(String regionName, byte[] data) {
+    String znode = getZNode(getRegionInTransitionZNode(), regionName);
+    // this is an update - make sure the node already exists
+    if(!exists(znode, true)) {
+      LOG.error("Cannot update " + znode + " - node does not exist" );
+      return;
+    }
+
+    Stat stat = new Stat();
+    byte[] oldData = null;
+    try {
+      oldData = readZNode(znode, stat);
+    } catch (IOException e) {
+      LOG.error("Error reading data for " + znode);
+    }
+    // If there is no data in the ZNode, then update it
+    if(oldData == null) {
+      LOG.debug("While updating UNASSIGNED region " + regionName + " - node exists with no data" );
+    }
+    // If there is data in the ZNode, do not update if it is already correct
+    else {
+      HBaseEventType curState = HBaseEventType.fromByte(oldData[0]);
+      HBaseEventType newState = HBaseEventType.fromByte(data[0]);
+      // If the znode has the right state already, do not update it. Updating
+      // the znode again and again will bump up the zk version. This may cause
+      // the region server to fail. The RS expects that the znode is never
+      // updated by anyone else while it is opening/closing a region.
+      if(curState == newState) {
+        LOG.debug("No need to update UNASSIGNED region " + regionName +
+                  " as it already exists in state = " + curState);
+        return;
+      }
+
+      // If the ZNode is in another state, then update it
+      LOG.debug("UNASSIGNED region " + regionName + " is currently in state = " +
+                curState + ", updating it to " + newState);
+    }
+    // Update the ZNode
+    synchronized(unassignedZNodesWatched) {
+      unassignedZNodesWatched.add(znode);
+      try {
+        writeZNode(znode, data, -1, true);
+      } catch (IOException e) {
+        LOG.error("Error writing data for " + znode + ", could not update state to " + (HBaseEventType.fromByte(data[0])));
+      }
+    }
+  }
+
+  /**
+   * This method will create a new region in transition entry in ZK with the
+   * speficied data if none exists. If one already exists, it will update the
+   * data with whatever is passed in.
+   *
+   * @param regionName - encoded name of the region
+   * @param data - serialized data for the region znode
+   */
+  public void createOrUpdateUnassignedRegion(String regionName, byte[] data) {
+    String znode = getZNode(getRegionInTransitionZNode(), regionName);
+    if(exists(znode, true)) {
+      updateUnassignedRegion(regionName, data);
+    }
+    else {
+      createUnassignedRegion(regionName, data);
     }
   }
 
@@ -1154,8 +1251,8 @@ public class ZooKeeperWrapper implements Watcher {
   }
 
   /**
-   * Atomically adds a watch and reads data from the unwatched znodes in the 
-   * UNASSGINED region. This works because the master is the only person 
+   * Atomically adds a watch and reads data from the unwatched znodes in the
+   * UNASSGINED region. This works because the master is the only person
    * deleting nodes.
    * @param znode
    * @return
@@ -1184,23 +1281,23 @@ public class ZooKeeperWrapper implements Watcher {
     }
     return newNodes;
   }
-  
+
   public static class ZNodePathAndData {
     private String zNodePath;
     private byte[] data;
-    
+
     public ZNodePathAndData(String zNodePath, byte[] data) {
       this.zNodePath = zNodePath;
       this.data = data;
     }
-    
+
     public String getzNodePath() {
       return zNodePath;
     }
     public byte[] getData() {
       return data;
     }
-    
+
   }
 
   public String getSnapshotRootZNode() {

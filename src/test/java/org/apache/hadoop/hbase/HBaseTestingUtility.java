@@ -29,6 +29,9 @@ import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.NavigableSet;
+import java.util.Set;
 import java.util.UUID;
 
 import org.apache.commons.logging.Log;
@@ -39,6 +42,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.client.Delete;
+import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.HBaseAdmin;
 import org.apache.hadoop.hbase.client.HConnection;
 import org.apache.hadoop.hbase.client.HTable;
@@ -49,6 +53,9 @@ import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.master.HMaster;
 import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.HRegionServer;
+import org.apache.hadoop.hbase.regionserver.InternalScanner;
+import org.apache.hadoop.hbase.regionserver.ReadWriteConsistencyControl;
+import org.apache.hadoop.hbase.regionserver.Store;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.FSUtils;
 import org.apache.hadoop.hbase.util.Threads;
@@ -281,7 +288,7 @@ public class HBaseTestingUtility {
     // Do old style too just to be safe.
     this.conf.set("fs.default.name", fs.getUri().toString());
     this.dfsCluster.waitClusterUp();
-   
+
     // Start up a zk cluster.
     if (this.zkCluster == null) {
       startMiniZKCluster(this.clusterTestBuildDir);
@@ -343,6 +350,14 @@ public class HBaseTestingUtility {
    */
   public void flush() throws IOException {
     this.hbaseCluster.flushcache();
+  }
+
+  /**
+   * Flushes all caches in the mini hbase cluster
+   * @throws IOException
+   */
+  public void flush(byte [] tableName) throws IOException {
+    this.hbaseCluster.flushcache(tableName);
   }
 
 
@@ -514,7 +529,7 @@ public class HBaseTestingUtility {
     results.close();
     return digest.toString();
   }
-  
+
   /**
    * Creates many regions names "aaa" to "zzz".
    *
@@ -552,7 +567,7 @@ public class HBaseTestingUtility {
     };
     return createMultiRegions(c, table, columnFamily, KEYS);
   }
-  
+
   public int createMultiRegions(final Configuration c, final HTable table,
       final byte[] columnFamily, byte [][] startKeys)
   throws IOException {
@@ -610,7 +625,7 @@ public class HBaseTestingUtility {
     s.close();
     return rows;
   }
-  
+
   /**
    * Returns all rows from the .META. table for a given user table
    *
@@ -814,7 +829,7 @@ public class HBaseTestingUtility {
   }
 
   public void cleanupTestDir() throws IOException {
-    getTestDir().getFileSystem(conf).delete(getTestDir(), true);    
+    getTestDir().getFileSystem(conf).delete(getTestDir(), true);
   }
 
   public void waitTableAvailable(byte[] table, long timeoutMillis)
@@ -874,16 +889,16 @@ public class HBaseTestingUtility {
    * You'll get a NPE if you call before you've started a minidfscluster.
    * @param soft Soft limit
    * @param hard Hard limit
-   * @throws NoSuchFieldException 
-   * @throws SecurityException 
-   * @throws IllegalAccessException 
-   * @throws IllegalArgumentException 
+   * @throws NoSuchFieldException
+   * @throws SecurityException
+   * @throws IllegalAccessException
+   * @throws IllegalArgumentException
    */
   public void setNameNodeNameSystemLeasePeriod(final int soft, final int hard)
   throws SecurityException, NoSuchFieldException, IllegalArgumentException, IllegalAccessException {
     // TODO: If 0.20 hadoop do one thing, if 0.21 hadoop do another.
     // Not available in 0.20 hdfs.  Use reflection to make it happen.
-    
+
     // private NameNode nameNode;
     Field field = this.dfsCluster.getClass().getDeclaredField("nameNode");
     field.setAccessible(true);
@@ -899,10 +914,10 @@ public class HBaseTestingUtility {
    * </pre>
    * @param stream A DFSClient.DFSOutputStream.
    * @param max
-   * @throws NoSuchFieldException 
-   * @throws SecurityException 
-   * @throws IllegalAccessException 
-   * @throws IllegalArgumentException 
+   * @throws NoSuchFieldException
+   * @throws SecurityException
+   * @throws IllegalAccessException
+   * @throws IllegalArgumentException
    */
   public static void setMaxRecoveryErrorCount(final OutputStream stream,
       final int max) {
@@ -952,7 +967,7 @@ public class HBaseTestingUtility {
       // If I get to here and all rows have a Server, then all have been assigned.
       if (rows == countOfRegions) break;
       LOG.info("Found=" + rows);
-      Threads.sleep(1000); 
+      Threads.sleep(1000);
     }
   }
 
@@ -989,5 +1004,44 @@ public class HBaseTestingUtility {
         closedRegion.getRegionInfo(), null);
     r.initialize();
     return r;
+  }
+}
+
+  /**
+   * Do a small get/scan against one store. This is required because store
+   * has no actual methods of querying itself, and relies on StoreScanner.
+   */
+  public static List<KeyValue> getFromStoreFile(Store store,
+                                                Get get) throws IOException {
+    ReadWriteConsistencyControl.resetThreadReadPoint();
+    Scan scan = new Scan(get);
+    InternalScanner scanner = (InternalScanner) store.getScanner(scan,
+        scan.getFamilyMap().get(store.getFamily().getName()));
+
+    List<KeyValue> result = new ArrayList<KeyValue>();
+    scanner.next(result);
+    if (!result.isEmpty()) {
+      // verify that we are on the row we want:
+      KeyValue kv = result.get(0);
+      if (!Bytes.equals(kv.getRow(), get.getRow())) {
+        result.clear();
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Do a small get/scan against one store. This is required because store
+   * has no actual methods of querying itself, and relies on StoreScanner.
+   */
+  public static List<KeyValue> getFromStoreFile(Store store,
+                                                byte [] row,
+                                                NavigableSet<byte[]> columns
+                                                ) throws IOException {
+    Get get = new Get(row);
+    Map<byte[], NavigableSet<byte[]>> s = get.getFamilyMap();
+    s.put(store.getFamily().getName(), columns);
+
+    return getFromStoreFile(store,get);
   }
 }

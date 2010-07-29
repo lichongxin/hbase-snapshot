@@ -179,7 +179,8 @@ public class RegionManager {
         } catch (IOException e) {
           LOG.error("Error creating event data for " + HBaseEventType.M2ZK_REGION_OFFLINE, e);
         }
-        zkWrapper.createUnassignedRegion(HRegionInfo.ROOT_REGIONINFO.getEncodedName(), data);
+        zkWrapper.createOrUpdateUnassignedRegion(
+            HRegionInfo.ROOT_REGIONINFO.getEncodedName(), data);
         LOG.debug("Created UNASSIGNED zNode " + regionName + " in state " + HBaseEventType.M2ZK_REGION_OFFLINE);
         RegionState s = new RegionState(HRegionInfo.ROOT_REGIONINFO, RegionState.State.UNASSIGNED);
         regionsInTransition.put(regionName, s);
@@ -343,7 +344,8 @@ public class RegionManager {
       } catch (IOException e) {
         LOG.error("Error creating event data for " + HBaseEventType.M2ZK_REGION_OFFLINE, e);
       }
-      zkWrapper.createUnassignedRegion(rs.getRegionInfo().getEncodedName(), data);
+      zkWrapper.createOrUpdateUnassignedRegion(
+          rs.getRegionInfo().getEncodedName(), data);
       LOG.debug("Created UNASSIGNED zNode " + regionName + " in state " + HBaseEventType.M2ZK_REGION_OFFLINE);
       this.regionsInTransition.put(regionName, rs);
     }
@@ -993,8 +995,9 @@ public class RegionManager {
           //       should never happen
           LOG.error("Error creating event data for " + HBaseEventType.M2ZK_REGION_OFFLINE, e);
         }
-        zkWrapper.createUnassignedRegion(info.getEncodedName(), data);
-        LOG.debug("Created UNASSIGNED zNode " + info.getRegionNameAsString() + " in state " + HBaseEventType.M2ZK_REGION_OFFLINE);
+        zkWrapper.createOrUpdateUnassignedRegion(info.getEncodedName(), data);          
+        LOG.debug("Created/updated UNASSIGNED zNode " + info.getRegionNameAsString() + 
+                  " in state " + HBaseEventType.M2ZK_REGION_OFFLINE);
         s = new RegionState(info, RegionState.State.UNASSIGNED);
         regionsInTransition.put(info.getRegionNameAsString(), s);
       }

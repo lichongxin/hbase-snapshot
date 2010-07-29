@@ -39,6 +39,7 @@ import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Threads;
 
 import java.io.EOFException;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -52,7 +53,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.PriorityBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Class that handles the source of a replication stream.
@@ -70,8 +70,6 @@ public class ReplicationSource extends Thread
     implements ReplicationSourceInterface {
 
   private static final Log LOG = LogFactory.getLog(ReplicationSource.class);
-  // Lock to manage when a HLog is changing path (archiving)
-  private final ReentrantLock pathLock = new ReentrantLock();
   // Queue of logs to process
   private PriorityBlockingQueue<Path> queue;
   // container of entries to replicate
@@ -80,7 +78,7 @@ public class ReplicationSource extends Thread
   // Helper class for zookeeper
   private ReplicationZookeeperWrapper zkHelper;
   private Configuration conf;
-  // ratio   of region servers to chose from a slave cluster
+  // ratio of region servers to chose from a slave cluster
   private float ratio;
   private Random random;
   // should we replicate or not?
@@ -114,12 +112,18 @@ public class ReplicationSource extends Thread
   private String peerClusterZnode;
   // Indicates if this queue is recovered (and will be deleted when depleted)
   private boolean queueRecovered;
+  // List of all the dead region servers that had this queue (if recovered)
+  private String[] deadRegionServers;
   // Maximum number of retries before taking bold actions
   private long maxRetriesMultiplier;
   // Current number of entries that we need to replicate
   private int currentNbEntries = 0;
+  // Current number of operations (Put/Delete) that we need to replicate
+  private int currentNbOperations = 0;
   // Indicates if this particular source is running
   private volatile boolean running = true;
+  // Metrics for this source
+  private ReplicationSourceMetrics metrics;
 
   /**
    * Instantiation method used by region servers
@@ -166,19 +170,25 @@ public class ReplicationSource extends Thread
         this.conf.getLong("replication.source.sleepforretries", 1000);
     this.fs = fs;
     this.clusterId = Byte.valueOf(zkHelper.getClusterId());
+    this.metrics = new ReplicationSourceMetrics(peerClusterZnode);
 
     // Finally look if this is a recovered queue
     this.checkIfQueueRecovered(peerClusterZnode);
   }
 
   // The passed znode will be either the id of the peer cluster or
-  // the handling story of that queue in the form of id-startcode-*
+  // the handling story of that queue in the form of id-servername-*
   private void checkIfQueueRecovered(String peerClusterZnode) {
     String[] parts = peerClusterZnode.split("-");
     this.queueRecovered = parts.length != 1;
     this.peerClusterId = this.queueRecovered ?
         parts[0] : peerClusterZnode;
     this.peerClusterZnode = peerClusterZnode;
+    this.deadRegionServers = new String[parts.length-1];
+    // Extract all the places where we could find the hlogs
+    for (int i = 1; i < parts.length; i++) {
+      this.deadRegionServers[i-1] = parts[i];
+    }
   }
 
   /**
@@ -207,28 +217,7 @@ public class ReplicationSource extends Thread
   @Override
   public void enqueueLog(Path log) {
     this.queue.put(log);
-  }
-
-  @Override
-  public void logArchived(Path oldPath, Path newPath) {
-    // in sync with queue polling
-    this.pathLock.lock();
-    try {
-      if (oldPath.equals(this.currentPath)) {
-        this.currentPath = newPath;
-        LOG.debug("Current log moved, changing currentPath to " +newPath);
-        return;
-      }
-
-      boolean present = this.queue.remove(oldPath);
-      LOG.debug("old log was " + (present ?
-          "present, changing the queue" : "already processed"));
-      if (present) {
-        this.queue.add(newPath);
-      }
-    } finally {
-      this.pathLock.unlock();
-    }
+    this.metrics.sizeOfLogQueue.set(queue.size());
   }
 
   @Override
@@ -247,23 +236,18 @@ public class ReplicationSource extends Thread
     int sleepMultiplier = 1;
     // Loop until we close down
     while (!stop.get() && this.running) {
-
-      // In sync with logArchived
-      this.pathLock.lock();
-      try {
-        // Get a new path
-        if (!getNextPath()) {
-          if (sleepForRetries("No log to process", sleepMultiplier)) {
-            sleepMultiplier++;
-          }
-          continue;
+      // Get a new path
+      if (!getNextPath()) {
+        if (sleepForRetries("No log to process", sleepMultiplier)) {
+          sleepMultiplier++;
         }
-        // Open a reader on it
-        if (!openReader(sleepMultiplier)) {
-          continue;
-        }
-      } finally {
-        this.pathLock.unlock();
+        continue;
+      }
+      // Open a reader on it
+      if (!openReader(sleepMultiplier)) {
+        // Reset the sleep multiplier, else it'd be reused for the next file
+        sleepMultiplier = 1;
+        continue;
       }
 
       // If we got a null reader but didn't continue, then sleep and continue
@@ -274,7 +258,7 @@ public class ReplicationSource extends Thread
         continue;
       }
 
-      boolean gotIOE = false; // TODO this is a hack for HDFS-1057
+      boolean gotIOE = false;
       currentNbEntries = 0;
       try {
         if(readAllEntriesToReplicateOrNextFile()) {
@@ -355,6 +339,7 @@ public class ReplicationSource extends Thread
     HLog.Entry entry = this.reader.next(this.entriesArray[currentNbEntries]);
     while (entry != null) {
       WALEdit edit = entry.getEdit();
+      this.metrics.logEditsReadRate.inc(1);
       seenEntries++;
       // Remove all KVs that should not be replicated
       removeNonReplicableEdits(edit);
@@ -365,7 +350,10 @@ public class ReplicationSource extends Thread
           Bytes.equals(logKey.getTablename(), HConstants.META_TABLE_NAME)) &&
           edit.size() != 0 && replicating.get()) {
         logKey.setClusterId(this.clusterId);
+        currentNbOperations += countDistinctRowKeys(edit);
         currentNbEntries++;
+      } else {
+        this.metrics.logEditsFilteredRate.inc(1);
       }
       // Stop if too many entries or too big
       if ((this.reader.getPosition() - this.position)
@@ -375,7 +363,7 @@ public class ReplicationSource extends Thread
       }
       entry = this.reader.next(entriesArray[currentNbEntries]);
     }
-    LOG.debug("currentNbEntries:" + currentNbEntries +
+    LOG.debug("currentNbOperations:" + currentNbOperations +
         " and seenEntries:" + seenEntries +
         " and size: " + (this.reader.getPosition() - this.position));
     // If we didn't get anything and the queue has an object, it means we
@@ -403,6 +391,7 @@ public class ReplicationSource extends Thread
     try {
       if (this.currentPath == null) {
         this.currentPath = queue.poll(this.sleepForRetries, TimeUnit.MILLISECONDS);
+        this.metrics.sizeOfLogQueue.set(queue.size());
       }
     } catch (InterruptedException e) {
       LOG.warn("Interrupted while reading edits", e);
@@ -418,10 +407,48 @@ public class ReplicationSource extends Thread
    */
   protected boolean openReader(int sleepMultiplier) {
     try {
-      LOG.info("Opening log for replication " + this.currentPath.getName() + " at " + this.position);
-      this.reader = HLog.getReader(this.fs, this.currentPath, this.conf);
+      LOG.info("Opening log for replication " + this.currentPath.getName() +
+          " at " + this.position);
+      try {
+       this.reader = null;
+       this.reader = HLog.getReader(this.fs, this.currentPath, this.conf);
+      } catch (FileNotFoundException fnfe) {
+        if (this.queueRecovered) {
+          // We didn't find the log in the archive directory, look if it still
+          // exists in the dead RS folder (there could be a chain of failures
+          // to look at)
+          for (int i = this.deadRegionServers.length - 1; i > 0; i--) {
+            Path deadRsDirectory =
+                new Path(this.manager.getLogDir(), this.deadRegionServers[i]);
+            Path possibleLogLocation =
+                new Path(deadRsDirectory, currentPath.getName());
+            if (this.manager.getFs().exists(possibleLogLocation)) {
+              // We found the right new location
+              LOG.info("Log " + this.currentPath + " still exists at " +
+                  possibleLogLocation);
+              // Breaking here will make us sleep since reader is null
+              break;
+            }
+          }
+          // TODO What happens if the log was missing from every single location?
+          // Although we need to check a couple of times as the log could have
+          // been moved by the master between the checks
+        } else {
+          // If the log was archived, continue reading from there
+          Path archivedLogLocation =
+              new Path(manager.getOldLogDir(), currentPath.getName());
+          if (this.manager.getFs().exists(archivedLogLocation)) {
+            currentPath = archivedLogLocation;
+            LOG.info("Log " + this.currentPath + " was moved to " +
+                archivedLogLocation);
+            // Open the log at the new location
+            this.openReader(sleepMultiplier);
+
+          }
+          // TODO What happens the log is missing in both places?
+        }
+      }
     } catch (IOException ioe) {
-      this.reader = null;
       LOG.warn(peerClusterZnode + " Got: ", ioe);
       // TODO Need a better way to determinate if a file is really gone but
       // TODO without scanning all logs dir
@@ -468,6 +495,24 @@ public class ReplicationSource extends Thread
   }
 
   /**
+   * Count the number of different row keys in the given edit because of
+   * mini-batching. We assume that there's at least one KV in the WALEdit.
+   * @param edit edit to count row keys from
+   * @return number of different row keys
+   */
+  private int countDistinctRowKeys(WALEdit edit) {
+    List<KeyValue> kvs = edit.getKeyValues();
+    int distinctRowKeys = 1;
+    KeyValue lastKV = kvs.get(0);
+    for (int i = 0; i < edit.size(); i++) {
+      if (!kvs.get(i).matchingRow(lastKV)) {
+        distinctRowKeys++;
+      }
+    }
+    return distinctRowKeys;
+  }
+
+  /**
    * Do the shipping logic
    */
   protected void shipEdits() {
@@ -480,6 +525,11 @@ public class ReplicationSource extends Thread
         this.manager.logPositionAndCleanOldLogs(this.currentPath,
             this.peerClusterZnode, this.position, queueRecovered);
         this.totalReplicatedEdits += currentNbEntries;
+        this.metrics.shippedBatchesRate.inc(1);
+        this.metrics.shippedOpsRate.inc(
+            this.currentNbOperations);
+        this.metrics.setAgeOfLastShippedOp(
+            this.entriesArray[this.entriesArray.length-1].getKey().getWriteTime());
         LOG.debug("Replicated in total: " + this.totalReplicatedEdits);
         break;
 
@@ -516,19 +566,14 @@ public class ReplicationSource extends Thread
    * continue trying to read from it
    */
   protected boolean processEndOfFile() {
-    this.pathLock.lock();
-    try {
-      if (this.queue.size() != 0) {
-        this.currentPath = null;
-        this.position = 0;
-        return true;
-      } else if (this.queueRecovered) {
-        this.manager.closeRecoveredQueue(this);
-        this.abort();
-        return true;
-      }
-    } finally {
-      this.pathLock.unlock();
+    if (this.queue.size() != 0) {
+      this.currentPath = null;
+      this.position = 0;
+      return true;
+    } else if (this.queueRecovered) {
+      this.manager.closeRecoveredQueue(this);
+      this.abort();
+      return true;
     }
     return false;
   }
