@@ -1005,7 +1005,6 @@ public class HBaseTestingUtility {
     r.initialize();
     return r;
   }
-}
 
   /**
    * Do a small get/scan against one store. This is required because store
