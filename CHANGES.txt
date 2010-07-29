@@ -457,6 +457,7 @@ Release 0.21.0 - Unreleased
    HBASE-2815  not able to run the test suite in background because TestShell
                gets suspended on tty output (Alexey Kovyrin via Stack)
    HBASE-2852  Bloom filter NPE (pranav via jgray)
+   HBASE-2820  hbck throws an error if HBase root dir isn't on the default FS
 
   IMPROVEMENTS
    HBASE-1760  Cleanup TODOs in HTable
@@ -810,6 +811,9 @@ Release 0.21.0 - Unreleased
                (Benoît Sigoure via Stack)
    HBASE-2879  Offer ZK CLI outside of HBase Shell
                (Nicolas Spiegelberg via Stack)
+   HBASE-2886  Add search box to site (Alex Baranau via Stack)
+   HBASE-2868  Do some small cleanups in org.apache.hadoop.hbase.regionserver.wal
+               (Alex Newman via Stack)
 
   NEW FEATURES
    HBASE-1961  HBase EC2 scripts
