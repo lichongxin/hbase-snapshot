@@ -112,6 +112,30 @@ public class TestSnapshotFailure implements Watcher {
   }
 
   @Test
+  public void testSnapshotTimeout() throws IOException {
+    // start creating a snapshot for testtable
+    byte[] snapshotName = Bytes.toBytes("snapshot3");
+    HSnapshotDescriptor hsd = new HSnapshotDescriptor(snapshotName, TABLENAME);
+
+    // Cut region server connection with ZK:
+    // unregister region server's ZKSnapshotWatcher so it will not
+    // receive the snapshot request from ZK
+    server2.getZooKeeperWrapper().unregisterListener(
+      server2.getSnapshotWatcher());
+
+    // start monitor first and then start the snapshot via ZK
+    master.getSnapshotMonitor().start(hsd);
+    assertTrue(zk.startSnapshot(hsd));
+
+    SnapshotStatus status = master.getSnapshotMonitor().waitToFinish();
+    assertEquals(SnapshotStatus.M_ABORTED, status);
+
+    // register server2 for following test case
+    server2.getZooKeeperWrapper().registerListener(
+      server2.getSnapshotWatcher());
+  }
+
+  @Test
   public void testSnapshotRSError() throws IOException {
     // start creating a snapshot for testtable
     byte[] snapshotName = Bytes.toBytes("snapshot4");
@@ -123,7 +147,7 @@ public class TestSnapshotFailure implements Watcher {
     // start monitor first and then start the snapshot via ZK
     master.getSnapshotMonitor().start(hsd);
     assertTrue(zk.startSnapshot(hsd));
-    
+
     SnapshotStatus status = master.getSnapshotMonitor().waitToFinish();
     assertEquals(SnapshotStatus.M_ABORTED, status);
   }
@@ -142,26 +166,6 @@ public class TestSnapshotFailure implements Watcher {
       zk.removeRSForSnapshot(rss.get(0), SnapshotStatus.RS_READY);
       zk.unregisterListener(this);
     }
-  }
-
-  @Test
-  public void testSnapshotTimeout() throws IOException {
-    // start creating a snapshot for testtable
-    byte[] snapshotName = Bytes.toBytes("snapshot3");
-    HSnapshotDescriptor hsd = new HSnapshotDescriptor(snapshotName, TABLENAME);
-
-    // Cut region server connection with ZK:
-    // unregister region server's ZKSnapshotWatcher so it will not
-    // receive the snapshot request from ZK
-    server2.getZooKeeperWrapper().unregisterListener(
-        server2.getSnapshotWatcher());
-
-    // start monitor first and then start the snapshot via ZK
-    master.getSnapshotMonitor().start(hsd);
-    assertTrue(zk.startSnapshot(hsd));
-
-    SnapshotStatus status = master.getSnapshotMonitor().waitToFinish();
-    assertEquals(SnapshotStatus.M_ABORTED, status);
   }
 
   private static void waitUntilAllRegionsAssigned(final int countOfRegions)

@@ -44,8 +44,7 @@ public class SnapshotLogCleaner implements LogCleanerDelegate {
      * This solution makes every miss very expensive to process since we
      * iterate the snapshot directory to refresh the cache each time.
      * Actually we only have to refresh the cache once in LogsCleaner.chore.
-     * Move refreshing into LogsCleaner.chore? Need to find this cleaner
-     * from the cleaners chain.
+     * Move refreshing this cleaner into LogsCleaner.chore?
      */
     return !refreshHLogsAndSearch(log);
   }

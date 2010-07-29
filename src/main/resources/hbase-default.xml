@@ -291,13 +291,13 @@
   </property>
   <property>
     <name>hbase.master.logcleaner.plugins</name>
-    <value>org.apache.hadoop.hbase.master.TimeToLiveLogCleaner,org.apache.hadoop.hbase.replication.master.ReplicationLogCleaner</value>
+    <value>org.apache.hadoop.hbase.master.TimeToLiveLogCleaner,org.apache.hadoop.hbase.replication.master.ReplicationLogCleaner,org.apache.hadoop.hbase.master.SnapshotLogCleaner</value>
     <description>A comma-separated list of LogCleanerDelegate that are used
     in LogsCleaner. These log cleaners are called in order, so put the log
     cleaner that prunes the most log files in the front. To implement your own
     LogCleanerDelegate, just put it in HBase's classpath and add the fully
     qualified class name here. Without special reason, you should always add
-    the above two default log cleaners in the list.
+    the above default log cleaners in the list.
     </description>
   </property>
   <property>
