@@ -1400,7 +1400,7 @@ public class ZooKeeperWrapper implements Watcher {
    * @param status
    */
   public void removeRSForSnapshot(final String serverName, final SnapshotStatus status) {
-    if (!exists(snapshotReadyZNode, false) || 
+    if (!exists(snapshotReadyZNode, false) ||
         !exists(snapshotFinishZNode, false)) {
       LOG.debug("Ready/Finish directory has been removed for snapshot, skipping");
     }

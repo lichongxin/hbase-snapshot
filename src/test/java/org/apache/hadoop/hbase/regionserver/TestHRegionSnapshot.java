@@ -168,7 +168,7 @@ public class TestHRegionSnapshot {
       int splitRow = startRow + numRows;
       putData(region, splitRow, numRows, qualifier, FAMILIES);
       region.flushcache();
-      
+
       HRegion [] regions = null;
       try {
         regions = region.splitRegion(Bytes.toBytes("" + splitRow));
@@ -178,14 +178,14 @@ public class TestHRegionSnapshot {
         }
         // verify that the region has been split
         assertEquals(2, regions.length);
-        
+
         // create snapshot for a split daughter region
         boolean isStart = regions[0].startSnapshot();
         assertTrue(isStart);
         Path snapshotDir = HSnapshotDescriptor.getSnapshotDir(testRoot,
             Bytes.toBytes("snapshot2"));
         regions[0].completeSnapshot(snapshotDir, metaTable);
-        
+
         // get all the HFiles of this region which would be
         // used to check against the snapshot
         Set<Path> tableFiles = new HashSet<Path>();
@@ -196,7 +196,7 @@ public class TestHRegionSnapshot {
             tableFiles.add(file.getPath());
           }
         }
-        
+
         //  verify snapshot region
         verifyRegionSnapshot(regions[0].getRegionInfo(), tableFiles, snapshotDir, true);
       } finally {
@@ -260,7 +260,7 @@ public class TestHRegionSnapshot {
       // two HFiles
       putData(region, startRow, numRows, qualifier, FAMILIES);
       region.flushcache();
-      
+
       // major compaction would compact two HFiles into one and old files
       // would be deleted if the reference count is 0
       region.compactStores(true);
@@ -348,7 +348,7 @@ public class TestHRegionSnapshot {
 
   /*
    * Check if the dumped region info is the same as the original
-   * region info. 
+   * region info.
    */
   private void verifyRegionInfo(HRegionInfo srcInfo, Path snapshotDir)
     throws IOException {

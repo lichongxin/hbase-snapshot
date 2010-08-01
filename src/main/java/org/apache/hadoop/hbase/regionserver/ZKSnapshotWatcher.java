@@ -37,7 +37,7 @@ import org.apache.zookeeper.Watcher.Event.EventType;
  * or abort snapshot on the region server
  */
 public class ZKSnapshotWatcher implements Watcher {
-  private static final Log LOG = LogFactory.getLog(ZKSnapshotWatcher.class); 
+  private static final Log LOG = LogFactory.getLog(ZKSnapshotWatcher.class);
 
   private HRegionServer server;
   private ZooKeeperWrapper zkWrapper;
@@ -97,7 +97,7 @@ public class ZKSnapshotWatcher implements Watcher {
       if (data.length != 0) {
         HSnapshotDescriptor snapshot = (HSnapshotDescriptor) Writables
           .getWritable(data, new HSnapshotDescriptor());
-        LOG.debug("Create snapshot on RS: " + snapshot + ", RS=" + 
+        LOG.debug("Create snapshot on RS: " + snapshot + ", RS=" +
             server.getServerInfo().getServerName());
 
         handleSnapshotStart(snapshot);
@@ -108,7 +108,7 @@ public class ZKSnapshotWatcher implements Watcher {
       else {
         if (snapshotThread != null) {
           HSnapshotDescriptor snapshot = snapshotThread.getCurrentSnapshot();
-          LOG.debug("Abort snapshot on RS: " + snapshot + ", RS=" + 
+          LOG.debug("Abort snapshot on RS: " + snapshot + ", RS=" +
               server.getServerInfo().getServerName());
         }
         handleSnapshotAbort();

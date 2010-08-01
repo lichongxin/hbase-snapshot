@@ -669,12 +669,12 @@ public class HTableDescriptor implements WritableComparable<HTableDescriptor> {
           new HColumnDescriptor(HConstants.CATALOG_FAMILY,
             10,  // Ten is arbitrary number.  Keep versions to help debuggging.
             Compression.Algorithm.NONE.getName(), true, true, 8 * 1024,
-            HConstants.FOREVER, StoreFile.BloomType.NONE.toString(),  
+            HConstants.FOREVER, StoreFile.BloomType.NONE.toString(),
             HConstants.REPLICATION_SCOPE_LOCAL),
           new HColumnDescriptor(HConstants.SNAPSHOT_FAMILY,
             10,  // Ten is arbitrary number.  Keep versions to help debuggging.
             Compression.Algorithm.NONE.getName(), true, true, 8 * 1024,
-            HConstants.FOREVER, StoreFile.BloomType.NONE.toString(),  
+            HConstants.FOREVER, StoreFile.BloomType.NONE.toString(),
             HConstants.REPLICATION_SCOPE_LOCAL)});
 
   /** Table descriptor for <code>.META.</code> catalog table */
@@ -693,6 +693,6 @@ public class HTableDescriptor implements WritableComparable<HTableDescriptor> {
           new HColumnDescriptor(HConstants.SNAPSHOT_FAMILY,
             10,  // Ten is arbitrary number.  Keep versions to help debuggging.
             Compression.Algorithm.NONE.getName(), true, true, 8 * 1024,
-            HConstants.FOREVER, StoreFile.BloomType.NONE.toString(),  
+            HConstants.FOREVER, StoreFile.BloomType.NONE.toString(),
             HConstants.REPLICATION_SCOPE_LOCAL)});
 }

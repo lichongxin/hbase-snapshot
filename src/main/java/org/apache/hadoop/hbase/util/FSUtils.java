@@ -671,7 +671,7 @@ public class FSUtils {
       LOG.info("Create archive directory: " + archiveDir);
     }
 
-    Path dstFile = getHFileArchivePath(srcFile, archiveDir); 
+    Path dstFile = getHFileArchivePath(srcFile, archiveDir);
     LOG.info("Archive deleted file " + srcFile + " to " + dstFile);
     if (!fs.exists(dstFile.getParent())) {
       fs.mkdirs(dstFile.getParent());
@@ -699,8 +699,8 @@ public class FSUtils {
    * @return
    * @throws IOException
    */
-  public static Path createFileReference(final FileSystem fs, final Path srcFile, 
-      final Path dstDir) throws IOException {
+  public static Path createFileReference(final FileSystem fs,
+      final Path srcFile, final Path dstDir) throws IOException {
     // A reference to the entire store file.
     Reference r = new Reference(null, Range.entire);
 

@@ -192,7 +192,7 @@ public class TestSnapshot {
       // If I get to here and all rows have a Server, then all have been assigned.
       if (rows == countOfRegions) break;
       LOG.info("Found=" + rows);
-      Threads.sleep(1000); 
+      Threads.sleep(1000);
     }
   }
 
@@ -253,7 +253,7 @@ public class TestSnapshot {
     Scan scan = new Scan(TABLENAME).addFamily(HConstants.CATALOG_FAMILY);
     ResultScanner s = meta.getScanner(scan);
     for (Result r = null; (r = s.next()) != null;) {
-      byte [] b = 
+      byte [] b =
         r.getValue(HConstants.CATALOG_FAMILY, HConstants.REGIONINFO_QUALIFIER);
       if (b == null || b.length <= 0) break;
       HRegionInfo info = Writables.getHRegionInfo(b);
@@ -356,7 +356,7 @@ public class TestSnapshot {
 
   /*
    * Check if the dumped region info is the same as the original
-   * region info. 
+   * region info.
    */
   private void verifyRegionInfo(HRegionInfo srcInfo, Path snapshotDir)
     throws IOException {

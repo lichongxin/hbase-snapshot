@@ -571,7 +571,6 @@ public class StoreFile {
   }
 
   /**
-   * 
    * @param fs
    * @param dir Directory to create file in.
    * @return unique filename inside passed <code>dir</code>

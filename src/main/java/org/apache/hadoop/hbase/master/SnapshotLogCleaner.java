@@ -87,7 +87,7 @@ public class SnapshotLogCleaner implements LogCleanerDelegate {
         return true;
       }
     } catch (IOException e) {
-      // Keep the log file because we don't know if it is still used by 
+      // Keep the log file because we don't know if it is still used by
       // snapshots
       LOG.warn("Failed to get old logs for snapshots!", e);
       return true;

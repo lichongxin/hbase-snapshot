@@ -112,7 +112,7 @@ public class TestZKSnapshotWatcher {
     // start creating a snapshot for testtable
     byte[] snapshotName = Bytes.toBytes("snapshot1");
     HSnapshotDescriptor hsd = new HSnapshotDescriptor(snapshotName, TABLENAME);
-    
+
     long start = System.currentTimeMillis();
     assertTrue(zk.startSnapshot(hsd));
     waitUntilTerminated();
@@ -166,7 +166,7 @@ public class TestZKSnapshotWatcher {
       // If I get to here and all rows have a Server, then all have been assigned.
       if (rows == countOfRegions) break;
       LOG.info("Found=" + rows);
-      Threads.sleep(1000); 
+      Threads.sleep(1000);
     }
   }
 
@@ -288,7 +288,7 @@ public class TestZKSnapshotWatcher {
 
   /*
    * Check if the dumped region info is the same as the original
-   * region info. 
+   * region info.
    */
   private void verifyRegionInfo(HRegionInfo srcInfo, Path snapshotDir)
     throws IOException {

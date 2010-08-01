@@ -940,7 +940,7 @@ public class Store implements HeapSize {
   /*
    * Delete the old store files after compaction. If a store file
    * is referred by snapshots, that is the reference count is above 0,
-   * archive the store file in passed oldFilesDir. 
+   * archive the store file in passed oldFilesDir.
    */
   private void deleteStoreFiles(List<StoreFile> storeFiles)
     throws IOException {

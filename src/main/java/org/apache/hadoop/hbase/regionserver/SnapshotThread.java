@@ -44,7 +44,7 @@ public class SnapshotThread extends Thread {
       LOG.debug("Start snapshot thread for: " + snapshot);
       server.performSnapshot(snapshot);
     } catch (Throwable e) {
-      LOG.info("Failed to perform snapshot: " + snapshot + " on RS " + 
+      LOG.info("Failed to perform snapshot: " + snapshot + " on RS " +
           server.getServerInfo().getServerName(), e);
 
       /*

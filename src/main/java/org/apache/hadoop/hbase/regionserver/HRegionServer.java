@@ -2115,7 +2115,7 @@ public class HRegionServer implements HRegionInterface,
           if (!region.startSnapshot()) {
             allReady = false;
             break;
-          } 
+          }
           regionsToBackup.add(region);
         }
       }
@@ -2130,7 +2130,7 @@ public class HRegionServer implements HRegionInterface,
 
     zooKeeperWrapper.registerRSForSnapshot(serverInfo.getServerName(),
         SnapshotStatus.RS_READY);
-    LOG.debug("Started snapshot: " + snapshot + "on RS: " + 
+    LOG.debug("Started snapshot: " + snapshot + "on RS: " +
         serverInfo.getServerName());
 
     if (regionsToBackup.size() != 0) {
@@ -2154,7 +2154,7 @@ public class HRegionServer implements HRegionInterface,
 
     zooKeeperWrapper.registerRSForSnapshot(serverInfo.getServerName(),
         SnapshotStatus.RS_FINISH);
-    LOG.debug("Finished snapshot: " + snapshot + "on RS: " + 
+    LOG.debug("Finished snapshot: " + snapshot + "on RS: " +
         serverInfo.getServerName());
   }
 

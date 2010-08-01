@@ -16,10 +16,10 @@ import org.apache.hadoop.io.Writable;
 public class HSnapshotDescriptor implements Writable {
   /**
    * The file contains the snapshot basic information and it
-   * is under the directory of a snapshot. 
+   * is under the directory of a snapshot.
    */
   public static final String SNAPSHOTINFO_FILE = ".snapshotinfo";
-  
+
   private byte[] snapshotName;
   private byte[] tableName;
   private long creationTime;
@@ -48,7 +48,7 @@ public class HSnapshotDescriptor implements Writable {
    * @param tableName
    * @param creationTime
    */
-  public HSnapshotDescriptor(final byte[] snapshotName, final byte[] tableName, 
+  public HSnapshotDescriptor(final byte[] snapshotName, final byte[] tableName,
       final long creationTime) {
     this.snapshotName = snapshotName;
     this.tableName = tableName;
@@ -108,8 +108,8 @@ public class HSnapshotDescriptor implements Writable {
   }
 
   /**
-   * Get the snapshot root directory. All the snapshots are kept under this 
-   * directory, e.g. /hbase/.snapshot 
+   * Get the snapshot root directory. All the snapshots are kept under this
+   * directory, i.e. /hbase/.snapshot
    *
    * @param rootDir hbase root directory
    * @return

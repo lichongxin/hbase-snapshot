@@ -157,12 +157,12 @@ public class TestSnapshotFailure implements Watcher {
     String path = event.getPath();
     EventType type = event.getType();
     // remove a region server znode under ready directory, and
-    // this will notify the master that exception occurs during 
+    // this will notify the master that exception occurs during
     // the snapshot on one region server
     if (type.equals(EventType.NodeChildrenChanged) &&
         path.equals(zk.getSnapshotReadyZNode())) {
       List<String> rss = zk.listZnodes(zk.getSnapshotReadyZNode());
-      
+
       zk.removeRSForSnapshot(rss.get(0), SnapshotStatus.RS_READY);
       zk.unregisterListener(this);
     }
@@ -187,7 +187,7 @@ public class TestSnapshotFailure implements Watcher {
       // If I get to here and all rows have a Server, then all have been assigned.
       if (rows == countOfRegions) break;
       LOG.info("Found=" + rows);
-      Threads.sleep(1000); 
+      Threads.sleep(1000);
     }
   }
 

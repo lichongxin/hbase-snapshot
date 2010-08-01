@@ -893,7 +893,7 @@ public class HBaseAdmin {
    *
    * @param snapshotName name of the snapshot to be created
    * @param tableName name of the table for which snapshot is created
-   * @throws IOException if a remote or network exception occurs 
+   * @throws IOException if a remote or network exception occurs
    */
   public void snapshot(final byte[] snapshotName, final byte[] tableName)
       throws IOException {

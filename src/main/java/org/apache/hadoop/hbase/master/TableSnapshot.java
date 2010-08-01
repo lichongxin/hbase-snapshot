@@ -52,7 +52,7 @@ public class TableSnapshot extends TableOperation {
 
   protected final HTable metaTable;
 
-  TableSnapshot(final HMaster master, final HSnapshotDescriptor snapshot) 
+  TableSnapshot(final HMaster master, final HSnapshotDescriptor snapshot)
     throws IOException {
     super(master, snapshot.getTableName());
 
@@ -123,7 +123,7 @@ public class TableSnapshot extends TableOperation {
         if (StoreFile.isReference(file.getPath())) {
           // copy the file directly if it is already a half reference file after split
           dstFile = new Path(dstFamilyDir, file.getPath().getName());
-          FileUtil.copy(fs, file.getPath(), fs, dstFile, false, 
+          FileUtil.copy(fs, file.getPath(), fs, dstFile, false,
               master.getConfiguration());
         } else {
           dstFile = FSUtils.createFileReference(fs, file.getPath(), dstFamilyDir);

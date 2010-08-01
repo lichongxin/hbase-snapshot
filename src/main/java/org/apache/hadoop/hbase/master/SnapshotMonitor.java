@@ -61,7 +61,7 @@ public class SnapshotMonitor implements Watcher {
   SnapshotMonitor(final Configuration conf, final HMaster master) {
     this.master = master;
     this.zkWrapper = ZooKeeperWrapper.getInstance(conf, HMaster.class.getName());
-    
+
     String snapshotZNode = zkWrapper.getSnapshotRootZNode();
     // If the snapshot ZNode exists, clean up the znodes under snapshot dir
     if(master.isClusterStartup() && zkWrapper.exists(snapshotZNode, false)) {
@@ -92,7 +92,7 @@ public class SnapshotMonitor implements Watcher {
    *
    * @param hsd
    * @return
-   * @throws IOException 
+   * @throws IOException
    */
   public void start(final HSnapshotDescriptor hsd) throws IOException {
     LOG.debug("Start monitoring snapshot: " + hsd);
@@ -168,7 +168,7 @@ public class SnapshotMonitor implements Watcher {
           path.equals(zkWrapper.getSnapshotFinishZNode())) {
         Set<String> finishRS = new TreeSet<String>();
         finishRS.addAll(zkWrapper.listZnodes(zkWrapper.getSnapshotFinishZNode()));
-        
+
         if (finishRS.size() >= activeServers.size()) {
           status = SnapshotStatus.M_ALLFINISH;
           // all active servers for this table should finish
@@ -226,8 +226,8 @@ public class SnapshotMonitor implements Watcher {
    * Wait for the snapshot to be finished or aborted or timeout
    * after 3000 * 3 ms
    *
-   * @return snapshot status when 
-   * @throws IOException 
+   * @return snapshot status when
+   * @throws IOException
    */
   public SnapshotStatus waitToFinish() throws IOException {
     try {

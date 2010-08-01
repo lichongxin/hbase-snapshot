@@ -333,7 +333,7 @@ public class HRegion implements HeapSize { // , Writable{
 
     // Remove temporary data left over from old regions
     cleanupTmpDir();
-    
+
     // Load in all the HStores.  Get maximum seqid.
     long maxSeqId = -1;
     for (HColumnDescriptor c : this.regionInfo.getTableDesc().getFamilies()) {
@@ -2797,7 +2797,7 @@ public class HRegion implements HeapSize { // , Writable{
     // delete all the files that are not archived
     deleteRegion(fs, HRegion.getRegionDir(rootdir, info));
   }
-  
+
   /*
    * Archive HRegion's HFiles whose reference count > 0.
    */

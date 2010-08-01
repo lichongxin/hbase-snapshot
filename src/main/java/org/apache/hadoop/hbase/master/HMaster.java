@@ -945,7 +945,7 @@ public class HMaster extends Thread implements HMasterInterface,
    */
   private void dumpSnapshotInfo(final HSnapshotDescriptor snapshot)
     throws IOException {
-    Path snapshotDir = HSnapshotDescriptor.getSnapshotDir(rootdir, 
+    Path snapshotDir = HSnapshotDescriptor.getSnapshotDir(rootdir,
         snapshot.getSnapshotName());
     Path snapshotInfo = new Path(snapshotDir, HSnapshotDescriptor.SNAPSHOTINFO_FILE);
     FSDataOutputStream out = this.fs.create(snapshotInfo, true);
@@ -957,7 +957,7 @@ public class HMaster extends Thread implements HMasterInterface,
   }
 
   //snapshot operations
-  
+
   public void restoreSnapshot(final byte[] snapshotName) throws IOException {
     // TODO
   }
