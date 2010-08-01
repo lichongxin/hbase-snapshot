@@ -43,7 +43,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class ReplicationLogCleaner implements LogCleanerDelegate, Watcher {
 
   private static final Log LOG =
-      LogFactory.getLog(ReplicationLogCleaner.class);
+    LogFactory.getLog(ReplicationLogCleaner.class);
   private Configuration conf;
   private ReplicationZookeeperWrapper zkHelper;
   private Set<String> hlogs = new HashSet<String>();
