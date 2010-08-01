@@ -665,7 +665,7 @@ public class HTableDescriptor implements WritableComparable<HTableDescriptor> {
   /** Table descriptor for <core>-ROOT-</code> catalog table */
   public static final HTableDescriptor ROOT_TABLEDESC = new HTableDescriptor(
       HConstants.ROOT_TABLE_NAME,
-      new HColumnDescriptor[] { 
+      new HColumnDescriptor[] {
           new HColumnDescriptor(HConstants.CATALOG_FAMILY,
             10,  // Ten is arbitrary number.  Keep versions to help debuggging.
             Compression.Algorithm.NONE.getName(), true, true, 8 * 1024,
