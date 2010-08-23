@@ -1,6 +1,26 @@
+/**
+ * Copyright 2010 The Apache Software Foundation
+ *
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.apache.hadoop.hbase.master;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.io.IOException;
@@ -12,20 +32,23 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.HBaseTestingUtility;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
-import org.apache.hadoop.hbase.HSnapshotDescriptor;
+import org.apache.hadoop.hbase.SnapshotDescriptor;
 import org.apache.hadoop.hbase.client.HTable;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.ResultScanner;
 import org.apache.hadoop.hbase.client.Scan;
-import org.apache.hadoop.hbase.master.SnapshotMonitor.SnapshotStatus;
+import org.apache.hadoop.hbase.master.SnapshotSentinel.GlobalSnapshotStatus;
 import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.HRegionServer;
 import org.apache.hadoop.hbase.regionserver.TestZKSnapshotWatcher;
+import org.apache.hadoop.hbase.regionserver.ZKSnapshotWatcher.RSSnapshotStatus;
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.hbase.util.FSUtils;
 import org.apache.hadoop.hbase.util.Threads;
 import org.apache.hadoop.hbase.util.Writables;
 import org.apache.hadoop.hbase.zookeeper.ZooKeeperWrapper;
@@ -115,22 +138,33 @@ public class TestSnapshotFailure implements Watcher {
   public void testSnapshotTimeout() throws IOException {
     // start creating a snapshot for testtable
     byte[] snapshotName = Bytes.toBytes("snapshot3");
-    HSnapshotDescriptor hsd = new HSnapshotDescriptor(snapshotName, TABLENAME);
+    SnapshotDescriptor hsd = new SnapshotDescriptor(snapshotName, TABLENAME);
+    Path snapshotDir = SnapshotDescriptor.getSnapshotDir(
+        master.getRootDir(), hsd.getSnapshotName());
 
     // Cut region server connection with ZK:
-    // unregister region server's ZKSnapshotWatcher so it will not
+    // unregister region server's ZKSnapshotWatcher so it would not
     // receive the snapshot request from ZK
     server2.getZooKeeperWrapper().unregisterListener(
       server2.getSnapshotWatcher());
 
-    // start monitor first and then start the snapshot via ZK
-    master.getSnapshotMonitor().start(hsd);
-    assertTrue(zk.startSnapshot(hsd));
+    SnapshotSentinel sentinel = master.getSnapshotMonitor().monitor(hsd);
+    zk.startSnapshot(hsd);
 
-    SnapshotStatus status = master.getSnapshotMonitor().waitToFinish();
-    assertEquals(SnapshotStatus.M_ABORTED, status);
+    try {
+      sentinel.waitToFinish();
+    } catch (IOException e) {
+      assertTrue(master.getSnapshotMonitor().isInProcess());
+      master.getZooKeeperWrapper().abortSnapshot();
+      sentinel.waitToAbort();
 
-    // register server2 for following test case
+      // clean up snapshot
+      FSUtils.deleteDirectory(fs, snapshotDir);
+    }
+
+    assertEquals(GlobalSnapshotStatus.ABORTED, sentinel.getStatus());
+    assertFalse(fs.exists(snapshotDir));
+    // register server2 for following test cases
     server2.getZooKeeperWrapper().registerListener(
       server2.getSnapshotWatcher());
   }
@@ -139,17 +173,25 @@ public class TestSnapshotFailure implements Watcher {
   public void testSnapshotRSError() throws IOException {
     // start creating a snapshot for testtable
     byte[] snapshotName = Bytes.toBytes("snapshot4");
-    HSnapshotDescriptor hsd = new HSnapshotDescriptor(snapshotName, TABLENAME);
+    SnapshotDescriptor hsd = new SnapshotDescriptor(snapshotName, TABLENAME);
+    Path snapshotDir = SnapshotDescriptor.getSnapshotDir(
+        master.getRootDir(), hsd.getSnapshotName());
 
     // this watcher is used to simulate snapshot error on one region server
     zk.registerListener(this);
 
-    // start monitor first and then start the snapshot via ZK
-    master.getSnapshotMonitor().start(hsd);
-    assertTrue(zk.startSnapshot(hsd));
+    SnapshotSentinel sentinel = master.getSnapshotMonitor().monitor(hsd);
+    zk.startSnapshot(hsd);
 
-    SnapshotStatus status = master.getSnapshotMonitor().waitToFinish();
-    assertEquals(SnapshotStatus.M_ABORTED, status);
+    try {
+      sentinel.waitToFinish();
+    } catch (IOException e) {
+      // clean up snapshot
+      FSUtils.deleteDirectory(fs, snapshotDir);
+    }
+
+    assertEquals(GlobalSnapshotStatus.ABORTED, sentinel.getStatus());
+    assertFalse(fs.exists(snapshotDir));
   }
 
   @Override
@@ -163,7 +205,7 @@ public class TestSnapshotFailure implements Watcher {
         path.equals(zk.getSnapshotReadyZNode())) {
       List<String> rss = zk.listZnodes(zk.getSnapshotReadyZNode());
 
-      zk.removeRSForSnapshot(rss.get(0), SnapshotStatus.RS_READY);
+      zk.removeRSForSnapshot(rss.get(0), RSSnapshotStatus.READY);
       zk.unregisterListener(this);
     }
   }

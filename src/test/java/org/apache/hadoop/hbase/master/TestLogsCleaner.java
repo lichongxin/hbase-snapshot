@@ -21,30 +21,38 @@ package org.apache.hadoop.hbase.master;
 
 import static org.junit.Assert.assertEquals;
 
+import java.io.IOException;
+import java.net.URLEncoder;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileStatus;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hbase.HBaseTestingUtility;
+import org.apache.hadoop.hbase.HConstants;
+import org.apache.hadoop.hbase.SnapshotDescriptor;
+import org.apache.hadoop.hbase.regionserver.HRegionServer;
+import org.apache.hadoop.hbase.regionserver.wal.HLog;
+import org.apache.hadoop.hbase.replication.ReplicationZookeeperWrapper;
+import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.hbase.util.FSUtils;
+import org.apache.hadoop.hbase.zookeeper.ZooKeeperWrapper;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import org.apache.hadoop.hbase.HBaseTestingUtility;
-import org.apache.hadoop.hbase.HConstants;
-import org.apache.hadoop.hbase.regionserver.HRegionServer;
-import org.apache.hadoop.hbase.replication.ReplicationZookeeperWrapper;
-import org.apache.hadoop.hbase.zookeeper.ZooKeeperWrapper;
-import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.conf.Configuration;
-
-import java.net.URLEncoder;
-import java.util.concurrent.atomic.AtomicBoolean;
-
 public class TestLogsCleaner {
 
-  private final static HBaseTestingUtility TEST_UTIL = new HBaseTestingUtility();
+  private static final HBaseTestingUtility TEST_UTIL = new HBaseTestingUtility();
 
   private ReplicationZookeeperWrapper zkHelper;
+  private FileSystem fs;
 
   /**
    * @throws java.lang.Exception
@@ -71,6 +79,7 @@ public class TestLogsCleaner {
     zkHelper = new ReplicationZookeeperWrapper(
         ZooKeeperWrapper.createInstance(conf, HRegionServer.class.getName()),
         conf, new AtomicBoolean(true), "test-cluster");
+    fs = FileSystem.get(conf);
   }
 
   /**
@@ -87,7 +96,6 @@ public class TestLogsCleaner {
         HConstants.HREGION_OLDLOGDIR_NAME);
     String fakeMachineName = URLEncoder.encode("regionserver:60020", "UTF8");
 
-    FileSystem fs = FileSystem.get(c);
     AtomicBoolean stop = new AtomicBoolean(false);
     LogsCleaner cleaner = new LogsCleaner(1000, stop,c, fs, oldLogDir);
 
@@ -101,6 +109,7 @@ public class TestLogsCleaner {
     // Case 2: 1 "recent" file, not even deletable for the first log cleaner
     // (TimeToLiveLogCleaner), so we are not going down the chain
     fs.createNewFile(new Path(oldLogDir, fakeMachineName + "." + now));
+    List<Path> snapshotLogs = new ArrayList<Path>();
     System.out.println("Now is: " + now);
     for (int i = 0; i < 30; i++) {
       // Case 3: old files which would be deletable for the first log cleaner
@@ -116,7 +125,16 @@ public class TestLogsCleaner {
         zkHelper.addLogToList(fileName.getName(), fakeMachineName);
         System.out.println("Replication log file: " + fileName);
       }
+      if (i % (30/3) == 1) {
+        snapshotLogs.add(fileName);
+        System.out.println("Snapshot log file: " + fileName);
+      }
     }
+    // Case 5: dump three logs into a log list file under snapshot dir
+    // these log files would be used by snapshot
+    Path snapshotDir = SnapshotDescriptor.getSnapshotDir(
+        FSUtils.getRootDir(c), Bytes.toBytes("snapshot"));
+    dumpSnapshotLogList(snapshotDir, snapshotLogs);
     for (FileStatus stat : fs.listStatus(oldLogDir)) {
       System.out.println(stat.getPath().toString());
     }
@@ -137,12 +155,27 @@ public class TestLogsCleaner {
     cleaner.chore();
 
     // We end up with the current log file, a newer one and the 3 old log
-    // files which are scheduled for replication
-    assertEquals(5, fs.listStatus(oldLogDir).length);
+    // files which are scheduled for replication and 3 old log files which
+    // are used by snapshot
+    assertEquals(8, fs.listStatus(oldLogDir).length);
 
     for (FileStatus file : fs.listStatus(oldLogDir)) {
       System.out.println("Keeped log files: " + file.getPath().getName());
     }
   }
 
+  private void dumpSnapshotLogList(Path snapshotDir, List<Path> logFiles)
+    throws IOException {
+    Path oldLog = new Path(snapshotDir, HLog.getHLogDirectoryName("test-rs"));
+    FSDataOutputStream out = fs.create(oldLog, true);
+    // keep the number of log files for read
+    try {
+      out.writeInt(logFiles.size());
+      for(Path logFile : logFiles) {
+        out.writeUTF(logFile.getName());
+      }
+    } finally {
+      out.close();
+    }
+  }
 }

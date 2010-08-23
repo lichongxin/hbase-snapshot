@@ -21,8 +21,8 @@ package org.apache.hadoop.hbase.client;
 
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
 
 import java.io.IOException;
 import java.util.Iterator;
@@ -36,6 +36,7 @@ import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HServerAddress;
+import org.apache.hadoop.hbase.SnapshotDescriptor;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.TableExistsException;
 import org.apache.hadoop.hbase.TableNotDisabledException;
@@ -591,6 +592,96 @@ public class TestAdmin {
     HTableDescriptor confirmedHtd = table.getTableDescriptor();
 
     assertEquals(htd.compareTo(confirmedHtd), 0);
+  }
+
+  @Test
+  public void testSnapshot() throws IOException {
+    int snapshotNum = admin.listSnapshots().length;
+
+    HColumnDescriptor fam1 = new HColumnDescriptor("fam1");
+    HColumnDescriptor fam2 = new HColumnDescriptor("fam2");
+    HColumnDescriptor fam3 = new HColumnDescriptor("fam3");
+    HTableDescriptor htd = new HTableDescriptor("testTableForSnapshot1");
+    htd.addFamily(fam1);
+    htd.addFamily(fam2);
+    htd.addFamily(fam3);
+    this.admin.createTable(htd);
+    this.admin.snapshot(Bytes.toBytes("testSnapshot1"), htd.getName());
+
+    SnapshotDescriptor[] snapshots = admin.listSnapshots();
+    assertEquals(snapshotNum + 1, snapshots.length);
+    for (SnapshotDescriptor snapshot : snapshots) {
+      System.out.println("Snapshot: " + snapshot);
+    }
+  }
+
+  @Test
+  public void testRestoreSnapshot() throws IOException {
+    HColumnDescriptor fam1 = new HColumnDescriptor("fam1");
+    HColumnDescriptor fam2 = new HColumnDescriptor("fam2");
+    HColumnDescriptor fam3 = new HColumnDescriptor("fam3");
+    HTableDescriptor htd = new HTableDescriptor("testTableForSnapshot2");
+    htd.addFamily(fam1);
+    htd.addFamily(fam2);
+    htd.addFamily(fam3);
+    // create table and put some data into the table
+    this.admin.createTable(htd);
+    HTable table = new HTable(htd.getName());
+    for (int i = 0; i < 10; i++) {
+      byte[] val = Bytes.toBytes(i);
+      Put put = new Put(val);
+      put.add(fam1.getName(), null, val);
+      put.add(fam2.getName(), null, val);
+      put.add(fam3.getName(), null, val);
+      table.put(put);
+    }
+    byte[] snapshotName = Bytes.toBytes("testSnapshot2");
+    this.admin.snapshot(snapshotName, htd.getName());
+
+    // delete the table
+    this.admin.disableTable(htd.getName());
+    this.admin.deleteTable(htd.getName());
+    // make sure the table does not exist
+    assertFalse(admin.tableExists(htd.getName()));
+    // then restore the table from snapshot
+    this.admin.restoreSnapshot(snapshotName);
+
+    // verify data in the restored table
+    Scan s = new Scan();
+    ResultScanner scanner = table.getScanner(s);
+    Result r = null;
+    int rowCount = 0;
+    while ((r = scanner.next()) != null) {
+      rowCount++;
+      int val = Bytes.toInt(r.getRow());
+      assertEquals(val, Bytes.toInt(r.getValue(fam1.getName(), null)));
+      assertEquals(val, Bytes.toInt(r.getValue(fam2.getName(), null)));
+      assertEquals(val, Bytes.toInt(r.getValue(fam3.getName(), null)));
+    }
+    assertEquals(10, rowCount);
+    System.out.println("Row Count: " + rowCount);
+  }
+
+  @Test
+  public void testDeleteSnapshot() throws IOException {
+    int snapshotNum = admin.listSnapshots().length;
+    HColumnDescriptor fam1 = new HColumnDescriptor("fam1");
+    HColumnDescriptor fam2 = new HColumnDescriptor("fam2");
+    HColumnDescriptor fam3 = new HColumnDescriptor("fam3");
+    HTableDescriptor htd = new HTableDescriptor("testTableForSnapshot3");
+    htd.addFamily(fam1);
+    htd.addFamily(fam2);
+    htd.addFamily(fam3);
+    this.admin.createTable(htd);
+
+    byte[] snapshotName = Bytes.toBytes("testSnapshot3");
+    this.admin.snapshot(snapshotName, htd.getName());
+    SnapshotDescriptor[] snapshots = admin.listSnapshots();
+    assertEquals(snapshotNum + 1, snapshots.length);
+
+    this.admin.deleteSnapshot(snapshotName);
+    snapshots = admin.listSnapshots();
+    assertEquals(snapshotNum, snapshots.length);
   }
 }
 

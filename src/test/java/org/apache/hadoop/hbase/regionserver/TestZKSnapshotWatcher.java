@@ -1,13 +1,31 @@
+/**
+ * Copyright 2010 The Apache Software Foundation
+ *
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.apache.hadoop.hbase.regionserver;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import java.io.IOException;
 import java.util.HashSet;
 import java.util.Set;
-import java.util.SortedMap;
+import java.util.TreeSet;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -18,7 +36,7 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.HBaseTestingUtility;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
-import org.apache.hadoop.hbase.HSnapshotDescriptor;
+import org.apache.hadoop.hbase.SnapshotDescriptor;
 import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.HTable;
 import org.apache.hadoop.hbase.client.Put;
@@ -111,18 +129,20 @@ public class TestZKSnapshotWatcher {
   public void testHandleSnapshotStart() throws IOException, InterruptedException {
     // start creating a snapshot for testtable
     byte[] snapshotName = Bytes.toBytes("snapshot1");
-    HSnapshotDescriptor hsd = new HSnapshotDescriptor(snapshotName, TABLENAME);
+    SnapshotDescriptor hsd = new SnapshotDescriptor(snapshotName, TABLENAME);
+    Path snapshotDir = SnapshotDescriptor.getSnapshotDir(server.getRootDir(),
+        snapshotName);
+    // make sure the snapshot dir exist
+    server.getFileSystem().mkdirs(snapshotDir);
 
     long start = System.currentTimeMillis();
-    assertTrue(zk.startSnapshot(hsd));
+    zk.startSnapshot(hsd);
     waitUntilTerminated();
-    System.out.println("Time elapsed for creating snapshot: " +
+    System.out.println("Time elapsed for creating snapshot on RS: " +
         (System.currentTimeMillis() - start) + "ms");
     countOfSnapshot++;
 
     // verify the snapshot regions
-    Path snapshotDir = HSnapshotDescriptor.getSnapshotDir(server.getRootDir(),
-        snapshotName);
     verifyHLogsList(snapshotDir);
     for (HRegion region : server.getOnlineRegions()) {
       if (Bytes.equals(region.getTableDesc().getName(), TABLENAME)) {
@@ -219,25 +239,19 @@ public class TestZKSnapshotWatcher {
    * Verify if the dump log list is the same as current log list.
    */
   private void verifyHLogsList(Path snapshotDir) throws IOException {
-    SortedMap<Long, Path> logFiles = server.getLog().getCurrentLogFiles();
+    Set<String> logfiles = new TreeSet<String>();
+    for (Path log : server.getLog().getLogFiles().values()) {
+      logfiles.add(log.getName());
+    }
     Path oldLog = new Path(snapshotDir, HLog.getHLogDirectoryName(
         server.getServerInfo()));
     FSDataInputStream in = server.getFileSystem().open(oldLog);
     int logNum = in.readInt();
-    assertEquals(logNum, logFiles.size());
+    assertEquals(logNum, logfiles.size());
     for (int i = 0; i < logNum - 1; i++) {
-      long sequence = in.readLong();
-      Path log = logFiles.get(sequence);
-      assertNotNull(log);
-      String fileName = in.readUTF();
-      assertEquals(fileName, log.getName());
+      String filename = in.readUTF();
+      assertTrue(logfiles.contains(filename));
     }
-    // the current log file is also in the dumped log list
-    // but the sequence number might be different
-    in.readLong();
-    String currentLogName = in.readUTF();
-    Path currentLog = logFiles.get(logFiles.lastKey());
-    assertEquals(currentLog.getName(), currentLogName);
   }
 
   /*
@@ -270,11 +284,12 @@ public class TestZKSnapshotWatcher {
     for (Path file : snapshotFiles) {
       System.out.println(file.getName());
       Reference ref = Reference.read(fs, file);
-      assertEquals(ref.getFileRegion(), Range.entire);
+      assertEquals(ref.getFileRange(), Range.ENTIRE);
     }
 
     // 3. The reference count for each HFile is increased by 1.
-    HTable metaTable = new HTable(HConstants.META_TABLE_NAME);
+    HTable metaTable = new HTable(TEST_UTIL.getConfiguration(),
+        HConstants.META_TABLE_NAME);
     for (Path file : regionFiles) {
       Get get = new Get(srcInfo.getReferenceMetaRow());
       get.addColumn(HConstants.SNAPSHOT_FAMILY, Bytes.toBytes(

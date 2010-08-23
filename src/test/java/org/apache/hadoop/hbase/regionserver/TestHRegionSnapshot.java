@@ -1,3 +1,22 @@
+/**
+ * Copyright 2010 The Apache Software Foundation
+ *
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.apache.hadoop.hbase.regionserver;
 
 import static org.junit.Assert.assertEquals;
@@ -17,7 +36,7 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.HBaseTestingUtility;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
-import org.apache.hadoop.hbase.HSnapshotDescriptor;
+import org.apache.hadoop.hbase.SnapshotDescriptor;
 import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.HTable;
 import org.apache.hadoop.hbase.client.Put;
@@ -54,8 +73,7 @@ public class TestHRegionSnapshot {
   private HRegion region = null;
   private FileSystem fs = null;
 
-  private final String DIR = HBaseTestingUtility.getTestDir() +
-    "/TestHRegionSnapshot/";
+  private final Path DIR = HBaseTestingUtility.getTestDir("TestHRegionSnapshot");
 
   /**
    * @throws java.lang.Exception
@@ -93,7 +111,7 @@ public class TestHRegionSnapshot {
     int startRow = 100;
     int numRows = 10;
     byte [] qualifier = Bytes.toBytes("qualifier");
-    Path testRoot = new Path(DIR + name.getMethodName());
+    Path testRoot = new Path(DIR, name.getMethodName());
     // set up region
     region = TEST_UTIL.createHRegion(TABLENAME, testRoot, FAMILIES);
     HTable metaTable = null;
@@ -101,7 +119,8 @@ public class TestHRegionSnapshot {
       // if this is a meta table, we need update the ROOT table here
       metaTable = new HTable(HConstants.ROOT_TABLE_NAME);
     } else {
-      metaTable = new HTable(HConstants.META_TABLE_NAME);
+      metaTable = new HTable(TEST_UTIL.getConfiguration(),
+          HConstants.META_TABLE_NAME);
     }
 
     try {
@@ -120,12 +139,11 @@ public class TestHRegionSnapshot {
         }
       }
 
+      Path snapshotDir = SnapshotDescriptor.getSnapshotDir(testRoot,
+          Bytes.toBytes("snapshot1"));
       // create the snapshot for this region
       long start = System.currentTimeMillis();
-      boolean isStart = region.startSnapshot();
-      assertTrue(isStart);
-      Path snapshotDir = HSnapshotDescriptor.getSnapshotDir(testRoot,
-          Bytes.toBytes("snapshot1"));
+      region.startSnapshot();
       region.completeSnapshot(snapshotDir, metaTable);
       System.out.println("Time elapsed for snapshot: " +
           (System.currentTimeMillis() - start) + "ms");
@@ -151,7 +169,7 @@ public class TestHRegionSnapshot {
     int startRow = 100;
     int numRows = 10;
     byte [] qualifier = Bytes.toBytes("qualifier");
-    Path testRoot = new Path(DIR + name.getMethodName());
+    Path testRoot = new Path(DIR, name.getMethodName());
     // setting up region
     region = TEST_UTIL.createHRegion(TABLENAME, testRoot, FAMILIES);
     HTable metaTable = null;
@@ -159,7 +177,8 @@ public class TestHRegionSnapshot {
       // if this is a meta table, we need update the ROOT table here
       metaTable = new HTable(HConstants.ROOT_TABLE_NAME);
     } else {
-      metaTable = new HTable(HConstants.META_TABLE_NAME);
+      metaTable = new HTable(TEST_UTIL.getConfiguration(),
+          HConstants.META_TABLE_NAME);
     }
 
     try {
@@ -179,11 +198,10 @@ public class TestHRegionSnapshot {
         // verify that the region has been split
         assertEquals(2, regions.length);
 
-        // create snapshot for a split daughter region
-        boolean isStart = regions[0].startSnapshot();
-        assertTrue(isStart);
-        Path snapshotDir = HSnapshotDescriptor.getSnapshotDir(testRoot,
+        Path snapshotDir = SnapshotDescriptor.getSnapshotDir(testRoot,
             Bytes.toBytes("snapshot2"));
+        // create snapshot for a split daughter region
+        regions[0].startSnapshot();
         regions[0].completeSnapshot(snapshotDir, metaTable);
 
         // get all the HFiles of this region which would be
@@ -219,7 +237,7 @@ public class TestHRegionSnapshot {
     int startRow = 100;
     int numRows = 10;
     byte [] qualifier = Bytes.toBytes("qualifier");
-    Path testRoot = new Path(DIR + name.getMethodName());
+    Path testRoot = new Path(DIR, name.getMethodName());
     // setting up region
     region = TEST_UTIL.createHRegion(TABLENAME, testRoot, FAMILIES);
     HTable metaTable = null;
@@ -227,7 +245,8 @@ public class TestHRegionSnapshot {
       // if this is a meta table, we need update the ROOT table here
       metaTable = new HTable(HConstants.ROOT_TABLE_NAME);
     } else {
-      metaTable = new HTable(HConstants.META_TABLE_NAME);
+      metaTable = new HTable(TEST_UTIL.getConfiguration(),
+          HConstants.META_TABLE_NAME);
     }
 
     try {
@@ -235,11 +254,10 @@ public class TestHRegionSnapshot {
       putData(region, startRow, numRows, qualifier, FAMILIES);
       region.flushcache();
 
-      // create the snapshot for this region
-      boolean isStart = region.startSnapshot();
-      assertTrue(isStart);
-      Path snapshotDir = HSnapshotDescriptor.getSnapshotDir(testRoot,
+      Path snapshotDir = SnapshotDescriptor.getSnapshotDir(testRoot,
           Bytes.toBytes("snapshot3"));
+      // create the snapshot for this region
+      region.startSnapshot();
       region.completeSnapshot(snapshotDir, metaTable);
 
       // get all the HFiles of this region which would be
@@ -327,14 +345,15 @@ public class TestHRegionSnapshot {
       System.out.println(file.getName());
       Reference ref = Reference.read(fs, file);
       if (!isSplit) {
-        assertEquals(ref.getFileRegion(), Range.entire);
+        assertEquals(ref.getFileRange(), Range.ENTIRE);
       }
     }
 
     // 3. The reference count for each HFile is increased by 1.
     // Because the initial value is 0 in this case, the result reference
     // count should be 1
-    HTable metaTable = new HTable(HConstants.META_TABLE_NAME);
+    HTable metaTable = new HTable(TEST_UTIL.getConfiguration(),
+        HConstants.META_TABLE_NAME);
     for (Path file : tableFiles) {
       Get get = new Get(srcInfo.getReferenceMetaRow());
       get.addColumn(HConstants.SNAPSHOT_FAMILY, Bytes.toBytes(

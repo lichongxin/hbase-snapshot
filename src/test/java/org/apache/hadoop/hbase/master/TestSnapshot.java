@@ -1,13 +1,31 @@
+/**
+ * Copyright 2010 The Apache Software Foundation
+ *
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.apache.hadoop.hbase.master;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import java.io.IOException;
 import java.util.HashSet;
 import java.util.Set;
-import java.util.SortedMap;
+import java.util.TreeSet;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -19,7 +37,7 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.HBaseTestingUtility;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
-import org.apache.hadoop.hbase.HSnapshotDescriptor;
+import org.apache.hadoop.hbase.SnapshotDescriptor;
 import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.HBaseAdmin;
 import org.apache.hadoop.hbase.client.HTable;
@@ -29,10 +47,11 @@ import org.apache.hadoop.hbase.client.ResultScanner;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.io.Reference;
 import org.apache.hadoop.hbase.io.Reference.Range;
-import org.apache.hadoop.hbase.master.SnapshotMonitor.SnapshotStatus;
+import org.apache.hadoop.hbase.master.SnapshotSentinel.GlobalSnapshotStatus;
 import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.HRegionServer;
 import org.apache.hadoop.hbase.regionserver.TestZKSnapshotWatcher;
+import org.apache.hadoop.hbase.regionserver.ZKSnapshotWatcher.RSSnapshotStatus;
 import org.apache.hadoop.hbase.regionserver.wal.HLog;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.FSUtils;
@@ -131,23 +150,23 @@ public class TestSnapshot {
   public void testSnapshotForOnlineTable() throws IOException {
     // start creating a snapshot for testtable
     byte[] snapshotName = Bytes.toBytes("snapshot1");
-    HSnapshotDescriptor hsd = new HSnapshotDescriptor(snapshotName, TABLENAME);
+    SnapshotDescriptor hsd = new SnapshotDescriptor(snapshotName, TABLENAME);
 
     long start = System.currentTimeMillis();
     // start monitor first and then start the snapshot via ZK
-    master.getSnapshotMonitor().start(hsd);
-    assertTrue(zk.startSnapshot(hsd));
+    SnapshotSentinel sentinel = master.getSnapshotMonitor().monitor(hsd);
+    zk.startSnapshot(hsd);
 
     // add other region server which doesn't serve the table regions
     // under ready or finish directory won't change the status
-    zk.registerRSForSnapshot("other-rs", SnapshotStatus.RS_READY);
-    zk.registerRSForSnapshot("other-rs", SnapshotStatus.RS_FINISH);
+    zk.registerRSForSnapshot("other-rs", RSSnapshotStatus.READY);
+    zk.registerRSForSnapshot("other-rs", RSSnapshotStatus.FINISH);
 
     // wait for the snapshot to finish
-    SnapshotStatus finalStatus = master.getSnapshotMonitor().waitToFinish();
+    sentinel.waitToFinish();
     System.out.println("Time elapsed for creating snapshot: " +
         (System.currentTimeMillis() - start) + "ms");
-    assertEquals(finalStatus, SnapshotStatus.M_ALLFINISH);
+    assertEquals(GlobalSnapshotStatus.ALL_RS_FINISHED, sentinel.getStatus());
     countOfSnapshot++;
 
     // verify snapshot of this table
@@ -158,7 +177,7 @@ public class TestSnapshot {
   public void testSnapshotForOfflineTable() throws IOException, InterruptedException {
     // start creating a snapshot for testtable
     byte[] snapshotName = Bytes.toBytes("snapshot2");
-    HSnapshotDescriptor hsd = new HSnapshotDescriptor(snapshotName, TABLENAME);
+    SnapshotDescriptor hsd = new SnapshotDescriptor(snapshotName, TABLENAME);
     HBaseAdmin admin = new HBaseAdmin(TEST_UTIL.getConfiguration());
     admin.disableTable(TABLENAME);
     assertTrue(admin.isTableDisabled(TABLENAME));
@@ -239,7 +258,7 @@ public class TestSnapshot {
   private void verifySnapshot(final byte[] snapshotName, final boolean isOnline)
     throws IOException {
     Path rootDir = master.getRootDir();
-    Path snapshotDir = HSnapshotDescriptor.getSnapshotDir(rootDir, snapshotName);
+    Path snapshotDir = SnapshotDescriptor.getSnapshotDir(rootDir, snapshotName);
     if (isOnline) {
       // verify hlogs for both region server
       verifyHLogsList(server1, snapshotDir);
@@ -278,26 +297,19 @@ public class TestSnapshot {
    * Verify if the dump log list is the same as current log list.
    */
   private void verifyHLogsList(HRegionServer server, Path snapshotDir) throws IOException {
-    SortedMap<Long, Path> logFiles = server.getLog().getCurrentLogFiles();
+    Set<String> logfiles = new TreeSet<String>();
+    for (Path log : server.getLog().getLogFiles().values()) {
+      logfiles.add(log.getName());
+    }
     Path oldLog = new Path(snapshotDir, HLog.getHLogDirectoryName(
         server.getServerInfo()));
     FSDataInputStream in = fs.open(oldLog);
     int logNum = in.readInt();
-    assertEquals(logNum, logFiles.size());
+    assertEquals(logNum, logfiles.size());
     for (int i = 0; i < logNum - 1; i++) {
-      long sequence = in.readLong();
-      Path log = logFiles.get(sequence);
-      assertNotNull(log);
-      String fileName = in.readUTF();
-      assertEquals(fileName, log.getName());
+      String filename = in.readUTF();
+      assertTrue(logfiles.contains(filename));
     }
-    // the current log file is also in the dumped log list
-    // but the sequence number might be different.
-    // skipping the sequence number for current log file
-    in.readLong();
-    String currentLogName = in.readUTF();
-    Path currentLog = logFiles.get(logFiles.lastKey());
-    assertEquals(currentLog.getName(), currentLogName);
   }
 
   /*
@@ -329,11 +341,12 @@ public class TestSnapshot {
     for (Path file : snapshotFiles) {
       System.out.println(file.getName());
       Reference ref = Reference.read(fs, file);
-      assertEquals(ref.getFileRegion(), Range.entire);
+      assertEquals(ref.getFileRange(), Range.ENTIRE);
     }
 
     // 3. The reference count for each HFile is increased by 1.
-    HTable metaTable = new HTable(HConstants.META_TABLE_NAME);
+    HTable metaTable = new HTable(master.getConfiguration(),
+        HConstants.META_TABLE_NAME);
     for (Path file : regionFiles) {
       Get get = new Get(srcInfo.getReferenceMetaRow());
       get.addColumn(HConstants.SNAPSHOT_FAMILY, Bytes.toBytes(
@@ -349,7 +362,7 @@ public class TestSnapshot {
         // for those files which are created after the first flushing,
         // that is created when the table is disabled, the reference
         // count is 1 because it is only used by the second snapshot
-        assertEquals(countOfSnapshot - 1, Bytes.toLong(val));
+        assertEquals(1, Bytes.toLong(val));
       }
     }
   }

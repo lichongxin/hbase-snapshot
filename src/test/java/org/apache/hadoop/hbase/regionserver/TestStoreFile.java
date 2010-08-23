@@ -138,7 +138,7 @@ public class TestStoreFile extends HBaseTestCase {
     kv = KeyValue.createKeyValueFromKey(reader.getLastKey());
     byte [] finalRow = kv.getRow();
     // Make a reference
-    Path refPath = StoreFile.split(fs, dir, hsf, midRow, Range.top);
+    Path refPath = StoreFile.split(fs, dir, hsf, midRow, Range.TOP);
     StoreFile refHsf = new StoreFile(this.fs, refPath, true, conf,
         StoreFile.BloomType.NONE, false);
     // Now confirm that I can read from the reference and that it only gets
@@ -166,7 +166,7 @@ public class TestStoreFile extends HBaseTestCase {
     if (this.fs.exists(topDir)) {
       this.fs.delete(topDir, true);
     }
-    Path topPath = StoreFile.split(this.fs, topDir, f, midRow, Range.top);
+    Path topPath = StoreFile.split(this.fs, topDir, f, midRow, Range.TOP);
     // Create bottom split.
     Path bottomDir = Store.getStoreHomedir(this.testDir, "2",
       Bytes.toBytes(f.getPath().getParent().getName()));
@@ -174,7 +174,7 @@ public class TestStoreFile extends HBaseTestCase {
       this.fs.delete(bottomDir, true);
     }
     Path bottomPath = StoreFile.split(this.fs, bottomDir,
-      f, midRow, Range.bottom);
+      f, midRow, Range.BOTTOM);
     // Make readers on top and bottom.
     StoreFile.Reader top = new StoreFile(this.fs, topPath, true, conf,
         StoreFile.BloomType.NONE, false).createReader();
@@ -228,9 +228,9 @@ public class TestStoreFile extends HBaseTestCase {
       // First, do a key that is < than first key. Ensure splits behave
       // properly.
       byte [] badmidkey = Bytes.toBytes("  .");
-      topPath = StoreFile.split(this.fs, topDir, f, badmidkey, Range.top);
+      topPath = StoreFile.split(this.fs, topDir, f, badmidkey, Range.TOP);
       bottomPath = StoreFile.split(this.fs, bottomDir, f, badmidkey,
-        Range.bottom);
+        Range.BOTTOM);
       top = new StoreFile(this.fs, topPath, true, conf,
           StoreFile.BloomType.NONE, false).createReader();
       bottom = new StoreFile(this.fs, bottomPath, true, conf,
@@ -273,9 +273,9 @@ public class TestStoreFile extends HBaseTestCase {
 
       // Test when badkey is > than last key in file ('||' > 'zz').
       badmidkey = Bytes.toBytes("|||");
-      topPath = StoreFile.split(this.fs, topDir, f, badmidkey, Range.top);
+      topPath = StoreFile.split(this.fs, topDir, f, badmidkey, Range.TOP);
       bottomPath = StoreFile.split(this.fs, bottomDir, f, badmidkey,
-        Range.bottom);
+        Range.BOTTOM);
       top = new StoreFile(this.fs, topPath, true, conf,
           StoreFile.BloomType.NONE, false).createReader();
       bottom = new StoreFile(this.fs, bottomPath, true, conf,
