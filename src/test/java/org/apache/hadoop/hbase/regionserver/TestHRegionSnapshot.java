@@ -45,6 +45,7 @@ import org.apache.hadoop.hbase.io.Reference;
 import org.apache.hadoop.hbase.io.Reference.Range;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.FSUtils;
+import org.apache.hadoop.hbase.util.PairOfSameType;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Before;
@@ -190,7 +191,7 @@ public class TestHRegionSnapshot {
 
       HRegion [] regions = null;
       try {
-        regions = region.splitRegion(Bytes.toBytes("" + splitRow));
+        regions = splitRegion(region, Bytes.toBytes("" + splitRow));
         // Opening the regions returned.
         for (int i = 0; i < regions.length; i++) {
           regions[i] = TEST_UTIL.openClosedRegion(regions[i]);
@@ -230,6 +231,38 @@ public class TestHRegionSnapshot {
         region.getLog().closeAndDelete();
       }
     }
+  }
+
+  /**
+   * @param parent Region to split.
+   * @param midkey Key to split around.
+   * @return The Regions we created.
+   * @throws IOException
+   */
+  HRegion [] splitRegion(final HRegion parent, final byte [] midkey)
+  throws IOException {
+    PairOfSameType<HRegion> result = null;
+    SplitTransaction st = new SplitTransaction(parent, midkey);
+    // If prepare does not return true, for some reason -- logged inside in
+    // the prepare call -- we are not ready to split just now.  Just return.
+    if (!st.prepare()) return null;
+    try {
+      result = st.execute(null);
+    } catch (IOException ioe) {
+      try {
+        LOG.info("Running rollback of failed split of " +
+          parent.getRegionNameAsString() + "; " + ioe.getMessage());
+        st.rollback(null);
+        LOG.info("Successful rollback of failed split of " +
+          parent.getRegionNameAsString());
+        return null;
+      } catch (RuntimeException e) {
+        // If failed rollback, kill this server to avoid having a hole in table.
+        LOG.info("Failed rollback of failed split of " +
+          parent.getRegionNameAsString() + " -- aborting server", e);
+      }
+    }
+    return new HRegion [] {result.getFirst(), result.getSecond()};
   }
 
   @Test

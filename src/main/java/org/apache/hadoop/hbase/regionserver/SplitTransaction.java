@@ -342,10 +342,10 @@ class SplitTransaction {
     byte [] family = sf.getFamily();
     String encoded = this.hri_a.getEncodedName();
     Path storedir = Store.getStoreHomedir(splitdir, encoded, family);
-    StoreFile.split(fs, storedir, sf, this.splitrow, Range.bottom);
+    StoreFile.split(fs, storedir, sf, this.splitrow, Range.BOTTOM);
     encoded = this.hri_b.getEncodedName();
     storedir = Store.getStoreHomedir(splitdir, encoded, family);
-    StoreFile.split(fs, storedir, sf, this.splitrow, Range.top);
+    StoreFile.split(fs, storedir, sf, this.splitrow, Range.TOP);
   }
 
   /**
