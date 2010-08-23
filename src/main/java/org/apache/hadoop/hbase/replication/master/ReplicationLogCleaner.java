@@ -49,7 +49,7 @@ public class ReplicationLogCleaner implements LogCleanerDelegate, Watcher {
   private Set<String> hlogs = new HashSet<String>();
 
   /**
-   * Default constructor, do nothing
+   * Instantiates the cleaner, does nothing more.
    */
   public ReplicationLogCleaner() {}
 

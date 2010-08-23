@@ -125,6 +125,14 @@ public class LogsCleaner extends Chore {
   protected void chore() {
     try {
       FileStatus[] files = this.fs.listStatus(this.oldLogDir);
+      // refresh the hlogs cache for SnapshotLogCleaner to cache
+      // the logs used by snapshots
+      for (LogCleanerDelegate cleaner : logCleanersChain) {
+       if (cleaner instanceof SnapshotLogCleaner) {
+         ((SnapshotLogCleaner) cleaner).refreshHLogsCache();
+         break;
+       }
+      }
       int nbDeletedLog = 0;
       FILE: for (FileStatus file : files) {
         Path filePath = file.getPath();

@@ -44,7 +44,7 @@ import org.apache.commons.cli.ParseException;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FSDataOutputStream;
+import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -58,15 +58,16 @@ import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.HServerAddress;
 import org.apache.hadoop.hbase.HServerInfo;
 import org.apache.hadoop.hbase.HServerLoad;
-import org.apache.hadoop.hbase.HSnapshotDescriptor;
+import org.apache.hadoop.hbase.SnapshotDescriptor;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.LocalHBaseCluster;
 import org.apache.hadoop.hbase.MasterNotRunningException;
 import org.apache.hadoop.hbase.MiniZooKeeperCluster;
 import org.apache.hadoop.hbase.RemoteExceptionHandler;
+import org.apache.hadoop.hbase.SnapshotExistsException;
 import org.apache.hadoop.hbase.TableExistsException;
-import org.apache.hadoop.hbase.TablePartialOpenException;
+import org.apache.hadoop.hbase.TablePartiallyOpenException;
 import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.HBaseAdmin;
 import org.apache.hadoop.hbase.client.MetaScanner;
@@ -84,7 +85,6 @@ import org.apache.hadoop.hbase.ipc.HBaseServer;
 import org.apache.hadoop.hbase.ipc.HMasterInterface;
 import org.apache.hadoop.hbase.ipc.HMasterRegionInterface;
 import org.apache.hadoop.hbase.ipc.HRegionInterface;
-import org.apache.hadoop.hbase.master.SnapshotMonitor.SnapshotStatus;
 import org.apache.hadoop.hbase.master.metrics.MasterMetrics;
 import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.HRegionServer;
@@ -183,7 +183,7 @@ public class HMaster extends Thread implements HMasterInterface,
    */
   public HMaster(Configuration conf) throws IOException {
     this.conf = conf;
-    
+
     // Figure out if this is a fresh cluster start. This is done by checking the 
     // number of RS ephemeral nodes. RS ephemeral nodes are created only after 
     // the primary master has written the address to ZK. So this has to be done 
@@ -226,13 +226,17 @@ public class HMaster extends Thread implements HMasterInterface,
 
     // Make sure the region servers can archive their old logs
     this.oldLogDir = new Path(this.rootdir, HConstants.HREGION_OLDLOGDIR_NAME);
-    if(!this.fs.exists(this.oldLogDir)) {
-      this.fs.mkdirs(this.oldLogDir);
+    if (!this.fs.mkdirs(this.oldLogDir)) {
+      throw new IOException("Failed to create old log dir: " + oldLogDir);
     }
 
     this.archiveDir = FSUtils.getOldHFilesDir(conf);
-    if(!this.fs.exists(this.archiveDir)) {
-      this.fs.mkdirs(this.archiveDir);
+    if (!this.fs.mkdirs(this.archiveDir)) {
+      throw new IOException("Failed to create archive dir for hfiles: " + archiveDir);
+    }
+
+    if (!this.fs.mkdirs(SnapshotDescriptor.getSnapshotRootDir(rootdir))) {
+      throw new IOException("Failed to create snapshot root dir: " + rootdir);
     }
 
     // Get our zookeeper wrapper and then try to write our address to zookeeper.
@@ -244,13 +248,12 @@ public class HMaster extends Thread implements HMasterInterface,
       new ZKMasterAddressWatcher(this.zooKeeperWrapper, this.shutdownRequested);
     zooKeeperWrapper.registerListener(zkMasterAddressWatcher);
     this.zkMasterAddressWatcher.writeAddressToZooKeeper(this.address, true);
-    this.snapshotMonitor = new SnapshotMonitor(conf, this);
+    this.snapshotMonitor = new SnapshotMonitor(this);
     this.regionServerOperationQueue =
       new RegionServerOperationQueue(this.conf, this.closed);
 
     serverManager = new ServerManager(this);
 
-    
     // Start the unassigned watcher - which will create the unassigned region 
     // in ZK. This is needed before RegionManager() constructor tries to assign 
     // the root region.
@@ -260,7 +263,6 @@ public class HMaster extends Thread implements HMasterInterface,
     // start the "open region" executor service
     HBaseEventType.RS2ZK_REGION_OPENED.startMasterExecutorService(address.toString());
 
-    
     // start the region manager
     regionManager = new RegionManager(this);
 
@@ -902,68 +904,91 @@ public class HMaster extends Thread implements HMasterInterface,
 
   public void snapshot(final byte[] snapshotName, final byte[] tableName)
     throws IOException {
-    if (snapshotMonitor.isInProcess()) {
-      LOG.warn("Another snapshot is still in process, giving up...");
-      throw new IOException("Snapshot in process");
-    }
-    HSnapshotDescriptor hsd = new HSnapshotDescriptor(snapshotName, tableName);
-
-    if (connection.isTableEnabled(tableName)) {
-      // start monitor first and then start the snapshot via ZK
-      snapshotMonitor.start(hsd);
-      zooKeeperWrapper.startSnapshot(hsd);
-
-      // snapshot is not created successfully, clean up snapshot files
-      SnapshotStatus finalStatus = snapshotMonitor.waitToFinish();
-      if (finalStatus != SnapshotStatus.M_ALLFINISH) {
-          deleteSnapshot(snapshotName);
-      }
-    }
-    // For disabled table, we will create the snapshot on master
-    else if (connection.isTableDisabled(tableName)) {
-      try {
-        new TableSnapshot(this, hsd).process();
-      } catch (IOException e) {
-        LOG.warn("Failed to create snapshot: " + hsd, e);
-        // clean up the unfinished snapshot
-        deleteSnapshot(snapshotName);
-      }
-    }
-    else {
-      LOG.debug("Snapshot can not be created on partial open table "
-          + Bytes.toString(tableName));
-      throw new TablePartialOpenException(tableName);
+    SnapshotDescriptor hsd = new SnapshotDescriptor(snapshotName, tableName);
+    Path snapshotDir =
+      SnapshotDescriptor.getSnapshotDir(rootdir, hsd.getSnapshotName());
+    if (fs.exists(snapshotDir)) {
+      throw new SnapshotExistsException("Snapshot " +
+          hsd.getSnapshotNameAsString() + " already exists.");
     }
 
-    // finally dump a file containing the snapshot information
-    dumpSnapshotInfo(hsd);
-    LOG.info("Snapshot is created successfully: " + hsd);
-  }
-
-  /*
-   * Dump the snapshot descriptor information into a file under the snapshot dir
-   */
-  private void dumpSnapshotInfo(final HSnapshotDescriptor snapshot)
-    throws IOException {
-    Path snapshotDir = HSnapshotDescriptor.getSnapshotDir(rootdir,
-        snapshot.getSnapshotName());
-    Path snapshotInfo = new Path(snapshotDir, HSnapshotDescriptor.SNAPSHOTINFO_FILE);
-    FSDataOutputStream out = this.fs.create(snapshotInfo, true);
     try {
-      snapshot.write(out);
-    } finally {
-      out.close();
+      if (connection.isTableEnabled(tableName)) {
+        SnapshotSentinel sentinel = snapshotMonitor.monitor(hsd);
+        zooKeeperWrapper.startSnapshot(hsd);
+        sentinel.waitToFinish();
+      }
+      else if (connection.isTableDisabled(tableName)) {
+        // For disabled table, snapshot is created by the master
+        new TableSnapshot(this, hsd).process();
+      }
+      else {
+        throw new TablePartiallyOpenException(tableName);
+      }
+      LOG.info("Snapshot is created successfully: " + hsd);
+    } catch (IOException e) {
+      // abort this snapshot if timeout
+      if (snapshotMonitor.isInProcess()) {
+        zooKeeperWrapper.abortSnapshot();
+        snapshotMonitor.getCurrentSnapshotTracker().waitToAbort();
+      }
+
+      // clean up snapshot on file system, the reference count in META
+      // would be synchronized in MetaScanner
+      LOG.error("Failed to create snapshot, cleaning up failed snapshot: "
+          + hsd, e);
+      FSUtils.deleteDirectory(fs, snapshotDir);
+
+      throw e;
     }
   }
 
-  //snapshot operations
+  public SnapshotDescriptor[] listSnapshots() throws IOException{
+    List<SnapshotDescriptor> snapshotList =
+      new ArrayList<SnapshotDescriptor>();
+    Path snapshotRoot = SnapshotDescriptor.getSnapshotRootDir(rootdir);
+    FileStatus[] snapshots = fs.listStatus(snapshotRoot,
+        new FSUtils.DirFilter(fs));
+    for (FileStatus snapshot : snapshots) {
+      Path info =
+        new Path(snapshot.getPath(), SnapshotDescriptor.SNAPSHOTINFO_FILE);
+      FSDataInputStream in = null;
+      try {
+        in = fs.open(info);
+        SnapshotDescriptor hsd = new SnapshotDescriptor();
+        hsd.readFields(in);
+        snapshotList.add(hsd);
+      } catch (IOException e) {
+        LOG.warn("Crashed snapshot " + snapshot.getPath().getName());
+        // TODO clean up the snapshot?
+      } finally {
+        if (in != null) {
+          in.close();
+        }
+      }
+    }
+    return snapshotList.toArray(new SnapshotDescriptor[snapshotList.size()]);
+  }
 
   public void restoreSnapshot(final byte[] snapshotName) throws IOException {
-    // TODO
+    SnapshotOperation op = new RestoreSnapshot(this, snapshotName);
+    try {
+      op.process();
+    } catch (IOException e) {
+      LOG.error("Failed to restore snapshot:," + op.getSnapshotDescriptor(), e);
+
+      // clean up the half-restored table in META and file system
+      byte[] tableName = op.getSnapshotDescriptor().getTableName();
+      LOG.debug("Cleaning up restored table: " + Bytes.toString(tableName));
+      this.deleteTable(tableName);
+
+      throw e;
+    }
   }
 
   public void deleteSnapshot(final byte[] snapshotName) throws IOException {
-    // TODO
+    LOG.debug("Deleting snapshot: " + Bytes.toString(snapshotName));
+    new DeleteSnapshot(this, snapshotName).process();
   }
 
   /**

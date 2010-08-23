@@ -21,19 +21,19 @@ package org.apache.hadoop.hbase.regionserver;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.hadoop.hbase.HSnapshotDescriptor;
-import org.apache.hadoop.hbase.master.SnapshotMonitor.SnapshotStatus;
+import org.apache.hadoop.hbase.SnapshotDescriptor;
+import org.apache.hadoop.hbase.regionserver.ZKSnapshotWatcher.RSSnapshotStatus;
 
 /**
  * Thread that creates the snapshot on region server.
  */
-public class SnapshotThread extends Thread {
-  private static final Log LOG = LogFactory.getLog(SnapshotThread.class);
+public class Snapshotter extends Thread {
+  private static final Log LOG = LogFactory.getLog(Snapshotter.class);
 
-  private final HSnapshotDescriptor snapshot;
+  private final SnapshotDescriptor snapshot;
   private final HRegionServer server;
 
-  public SnapshotThread(final HSnapshotDescriptor snapshot, final HRegionServer server) {
+  public Snapshotter(final SnapshotDescriptor snapshot, final HRegionServer server) {
     this.snapshot = snapshot;
     this.server = server;
   }
@@ -41,7 +41,7 @@ public class SnapshotThread extends Thread {
   @Override
   public void run(){
     try {
-      LOG.debug("Start snapshot thread for: " + snapshot);
+      LOG.debug("Starting snapshot thread for: " + snapshot);
       server.performSnapshot(snapshot);
     } catch (Throwable e) {
       LOG.info("Failed to perform snapshot: " + snapshot + " on RS " +
@@ -57,18 +57,18 @@ public class SnapshotThread extends Thread {
        * will be created or deleted. Master will abort the snapshot when timeout.
        */
       server.getZooKeeperWrapper().removeRSForSnapshot(
-          server.getServerInfo().getServerName(), SnapshotStatus.RS_READY);
+          server.getServerInfo().getServerName(), RSSnapshotStatus.READY);
       server.getZooKeeperWrapper().removeRSForSnapshot(
-          server.getServerInfo().getServerName(), SnapshotStatus.RS_FINISH);
+          server.getServerInfo().getServerName(), RSSnapshotStatus.FINISH);
     }
   }
 
   /**
    * Get current snapshot descriptor for this thread
    *
-   * @return
+   * @return Snapshot descriptor for this thread
    */
-  public HSnapshotDescriptor getCurrentSnapshot() {
+  public SnapshotDescriptor getCurrentSnapshot() {
     return snapshot;
   }
 }

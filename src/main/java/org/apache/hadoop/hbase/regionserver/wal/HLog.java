@@ -37,6 +37,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableSet;
+import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -1074,14 +1075,27 @@ public class HLog implements Syncable {
   }
 
   /**
-   * @return a sorted map containing all the current files and corresponding
-   *         sequence number
+   * for test use only
+   * @return the log files in use except the current one
    */
-  public SortedMap<Long, Path> getCurrentLogFiles() {
-    SortedMap<Long, Path> files = new TreeMap<Long, Path>();
-    synchronized (this.updateLock) {
-      files.putAll(outputfiles);
-      files.put(Long.valueOf(this.logSeqNum.get() - 1), computeFilename());
+  public Map<Long, Path> getLogFiles() {
+    return Collections.unmodifiableMap(outputfiles);
+  }
+
+  /**
+   * Get the log files which contain all the un-flushed commits up to now.
+   *
+   * @return a set containing the current log files names
+   * @throws IOException
+   */
+  public Set<String> getCurrentLogFiles() throws IOException {
+    // roll log writer to close the current log file so that previous
+    // commits are all in outputfiles and subsequent commits would go
+    // to new log file
+    this.rollWriter();
+    Set<String> files = new TreeSet<String>();
+    for (Path log : outputfiles.values()) {
+      files.add(log.getName());
     }
     return files;
   }
@@ -1201,7 +1215,7 @@ public class HLog implements Syncable {
     }
     LOG.info("Splitting " + logfiles.length + " hlog(s) in " +
       srcDir.toString());
-    splits = splitLog(rootDir, srcDir, oldLogDir, logfiles, fs, conf);
+    splits = splitLog(rootDir, srcDir, oldLogDir, logfiles, null, fs, conf);
     try {
       FileStatus[] files = fs.listStatus(srcDir);
       for(FileStatus file : files) {
@@ -1222,6 +1236,40 @@ public class HLog implements Syncable {
     long endMillis = System.currentTimeMillis();
     LOG.info("hlog file splitting completed in " + (endMillis - millis) +
         " millis for " + srcDir.toString());
+    return splits;
+  }
+
+  /**
+   * Split up a bunch of regionserver commit log files into new files,
+   * one per region for region to replay. Only log entries that equal
+   * to the <code>tableFilter</code> would be included in the split edits.
+   *
+   * Since not all log entries are included in the split, log files are
+   * left at their original places instead of deleted or archived.
+   *
+   * @param rootDir qualified root directory of the HBase instance
+   * @param logfiles a list of log files to be split
+   * @param tableFilter filter the log entries by table name
+   * @param fs FileSystem
+   * @param conf Configuration
+   * @throws IOException will throw if corrupted hlogs aren't tolerated
+   * @return the list of splits
+   */
+  public static List<Path> splitLog(final Path rootDir,
+      FileStatus [] logfiles, byte[] tableFilter, final FileSystem fs,
+      final Configuration conf) throws IOException {
+    long millis = System.currentTimeMillis();
+    List<Path> splits = null;
+    if (logfiles == null || logfiles.length == 0) {
+      // Nothing to do
+      return splits;
+    }
+    LOG.info("Splitting " + logfiles.length + " hlog(s) for table:"
+        + Bytes.toString(tableFilter));
+    splits = splitLog(rootDir, null, null, logfiles, tableFilter, fs, conf);
+    long endMillis = System.currentTimeMillis();
+    LOG.info("hlog file splitting for table:" + Bytes.toString(tableFilter)
+        + " completed in " + (endMillis - millis) + " millis");
     return splits;
   }
 
@@ -1273,15 +1321,16 @@ public class HLog implements Syncable {
    * @param rootDir  hbase directory
    * @param srcDir   logs directory
    * @param oldLogDir directory where processed logs are archived to
-   * @param logfiles the list of log files to split
+   * @param logfiles the list of log files to split\
+   * @param tableFilter filter the log entries by table name
    * @param fs
    * @param conf
    * @return
    * @throws IOException
    */
   private static List<Path> splitLog(final Path rootDir, final Path srcDir,
-    Path oldLogDir, final FileStatus[] logfiles, final FileSystem fs,
-    final Configuration conf)
+    Path oldLogDir, final FileStatus[] logfiles, final byte[] tableFilter,
+    final FileSystem fs, final Configuration conf)
   throws IOException {
     List<Path> processedLogs = new ArrayList<Path>();
     List<Path> corruptedLogs = new ArrayList<Path>();
@@ -1314,7 +1363,7 @@ public class HLog implements Syncable {
             ": " + logPath + ", length=" + logLength );
           try {
             recoverFileLease(fs, logPath, conf);
-            parseHLog(log, editsByRegion, fs, conf);
+            parseHLog(log, tableFilter, editsByRegion, fs, conf);
             processedLogs.add(logPath);
            } catch (IOException e) {
              if (skipErrors) {
@@ -1328,11 +1377,14 @@ public class HLog implements Syncable {
         }
         writeEditsBatchToRegions(editsByRegion, logWriters, rootDir, fs, conf);
       }
-      if (fs.listStatus(srcDir).length > processedLogs.size() + corruptedLogs.size()) {
+      if (srcDir != null &&
+          fs.listStatus(srcDir).length > processedLogs.size() + corruptedLogs.size()) {
         throw new IOException("Discovered orphan hlog after split. Maybe " +
           "HRegionServer was not dead when we started");
       }
-      archiveLogs(corruptedLogs, processedLogs, oldLogDir, fs, conf);
+      if (oldLogDir != null) {
+        archiveLogs(corruptedLogs, processedLogs, oldLogDir, fs, conf);
+      }
     } finally {
       splits = new ArrayList<Path>(logWriters.size());
       for (WriterAndPath wap : logWriters.values()) {
@@ -1515,13 +1567,14 @@ public class HLog implements Syncable {
    * Parse a single hlog and put the edits in @splitLogsMap
    *
    * @param logfile to split
+   * @param tableFilter filter the log entries by table name
    * @param splitLogsMap output parameter: a map with region names as keys and a
    * list of edits as values
    * @param fs the filesystem
    * @param conf the configuration
    * @throws IOException if hlog is corrupted, or can't be open
    */
-  private static void parseHLog(final FileStatus logfile,
+  private static void parseHLog(final FileStatus logfile, final byte[] tableFilter,
     final Map<byte[], LinkedList<Entry>> splitLogsMap, final FileSystem fs,
     final Configuration conf)
   throws IOException {
@@ -1552,14 +1605,19 @@ public class HLog implements Syncable {
     try {
       Entry entry;
       while ((entry = in.next()) != null) {
-        byte[] region = entry.getKey().getRegionName();
-        LinkedList<Entry> queue = splitLogsMap.get(region);
-        if (queue == null) {
-          queue = new LinkedList<Entry>();
-          splitLogsMap.put(region, queue);
+        // log entry is included in split edits only if the tableFilter is null
+        // or the entry's table name equals to tableFilter
+        byte[] table = entry.getKey().getTablename();
+        if (tableFilter == null || Bytes.equals(table, tableFilter)) {
+          byte[] region = entry.getKey().getRegionName();
+          LinkedList<Entry> queue = splitLogsMap.get(region);
+          if (queue == null) {
+            queue = new LinkedList<Entry>();
+            splitLogsMap.put(region, queue);
+          }
+          queue.addLast(entry);
+          editsCount++;
         }
-        queue.addLast(entry);
-        editsCount++;
       }
       LOG.debug("Pushed=" + editsCount + " entries from " + path);
     } finally {

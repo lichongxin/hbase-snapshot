@@ -25,54 +25,59 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.FileUtil;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
-import org.apache.hadoop.hbase.HSnapshotDescriptor;
+import org.apache.hadoop.hbase.SnapshotDescriptor;
 import org.apache.hadoop.hbase.TableNotDisabledException;
 import org.apache.hadoop.hbase.client.HTable;
 import org.apache.hadoop.hbase.ipc.HRegionInterface;
 import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.StoreFile;
 import org.apache.hadoop.hbase.util.Bytes;
-import org.apache.hadoop.hbase.util.FSUtils;
 
 /**
- * Instantiated to create a snapshot by the master. Table must be offline.
+ * Instantiated to create snapshot for table which is offline.
+ * Since this table is offline and not served by any region server,
+ * this kind of snapshot is totally driven by this class in master.
  */
 public class TableSnapshot extends TableOperation {
   private final Log LOG = LogFactory.getLog(this.getClass());
 
-  protected final HSnapshotDescriptor snapshot;
+  protected final SnapshotDescriptor snapshot;
   protected final FileSystem fs;
   // directory which holds this snapshot
   protected final Path snapshotDir;
 
   protected final HTable metaTable;
 
-  TableSnapshot(final HMaster master, final HSnapshotDescriptor snapshot)
+  TableSnapshot(final HMaster master, final SnapshotDescriptor snapshot)
     throws IOException {
     super(master, snapshot.getTableName());
 
     this.snapshot = snapshot;
     this.fs = master.getFileSystem();
 
-    this.snapshotDir = HSnapshotDescriptor.getSnapshotDir(master.getRootDir(),
+    this.snapshotDir = SnapshotDescriptor.getSnapshotDir(master.getRootDir(),
         snapshot.getSnapshotName());
-    if (fs.exists(snapshotDir)) {
-      LOG.warn("Snapshot " + snapshot.getSnapshotNameAsString() + " already exists.");
-      throw new IOException("Snapshot already exists");
+    if (!fs.mkdirs(snapshotDir)) {
+      LOG.warn("Could not create snapshot directory: " + snapshotDir);
+      throw new IOException("Could not create snapshot directory: "
+          + snapshotDir);
     }
-    fs.mkdirs(snapshotDir);
 
     if (Bytes.equals(tableName, HConstants.META_TABLE_NAME)) {
       // If the snapshot table is meta table, we need update the ROOT table here
-      metaTable = new HTable(HConstants.ROOT_TABLE_NAME);
+      metaTable = new HTable(master.getConfiguration(),
+          HConstants.ROOT_TABLE_NAME);
     } else {
-      metaTable = new HTable(HConstants.META_TABLE_NAME);
+      metaTable = new HTable(master.getConfiguration(),
+          HConstants.META_TABLE_NAME);
     }
+
+    // dump snapshot info under snapshot dir
+    SnapshotDescriptor.write(snapshot, snapshotDir, fs);
   }
 
   @Override
@@ -80,7 +85,7 @@ public class TableSnapshot extends TableOperation {
     throws IOException {
     // table must be offline
     if (isEnabled(info)) {
-      LOG.debug("Region still enabled: " + info.toString());
+      LOG.info("Region still enabled: " + info.toString());
       throw new TableNotDisabledException(tableName);
     }
   }
@@ -98,17 +103,18 @@ public class TableSnapshot extends TableOperation {
         continue;
       }
 
-      backupRegion(i);
+      regionSnapshot(i);
     }
   }
 
   /*
-   * Backup the region files, including metadata and HFiles
+   * Create snapshot for a single region, i.e. dump the region meta and
+   * create reference files for HFiles of this region.
    */
-  private void backupRegion(final HRegionInfo info) throws IOException {
+  private void regionSnapshot(final HRegionInfo info) throws IOException {
     Path srcRegionDir = HRegion.getRegionDir(master.getRootDir(), info);
     Path dstRegionDir = new Path(snapshotDir, info.getEncodedName());
-    // 1. backup meta
+    // 1. dump the region meta
     HRegion.checkRegioninfoOnFilesystem(fs, info, dstRegionDir);
 
     FileSystem fs = master.getFileSystem();
@@ -118,39 +124,13 @@ public class TableSnapshot extends TableOperation {
 
       FileStatus[] hfiles = fs.listStatus(srcFamilyDir);
       for (FileStatus file : hfiles) {
-        Path dstFile = null;
-        // 2. back up HFiles
-        if (StoreFile.isReference(file.getPath())) {
-          // copy the file directly if it is already a half reference file after split
-          dstFile = new Path(dstFamilyDir, file.getPath().getName());
-          FileUtil.copy(fs, file.getPath(), fs, dstFile, false,
-              master.getConfiguration());
-        } else {
-          dstFile = FSUtils.createFileReference(fs, file.getPath(), dstFamilyDir);
-        }
-        // 3. update reference count for backup HFile
-        updateReferenceCountInMeta(info, file.getPath(), dstFile);
+        // 2. create "reference" to this HFile
+        Path dstFile = StoreFile.createReference(file.getPath(),
+            dstFamilyDir, fs, master.getConfiguration());
+        // 3. update reference count for this HFile
+        HRegion.updateRefCountInMeta(info, metaTable, file.getPath(),
+            dstFile, fs);
       }
-    }
-  }
-
-  /*
-   * Update the reference count for the backup file by one
-   */
-  private void updateReferenceCountInMeta(final HRegionInfo info,
-      Path backupFile, Path refFile) throws IOException {
-    try {
-      // reference count information is not stored in the original meta row for this
-      // region but in a separate row whose row key is prefixed by ".SNAPSHOT."
-      // This can be seen as a virtual table ".SNAPSHOT."
-      byte[] row = info.getReferenceMetaRow();
-      metaTable.incrementColumnValue(row, HConstants.SNAPSHOT_FAMILY,
-          Bytes.toBytes(FSUtils.getPath(backupFile)), 1);
-    } catch (IOException e) {
-      LOG.debug("Failed to update reference count for " + backupFile);
-      // delete reference file if updating reference count in META fails
-      fs.delete(refFile, true);
-      throw e;
     }
   }
 }

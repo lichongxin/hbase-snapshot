@@ -358,6 +358,21 @@ public class HRegionInfo extends VersionedWritable implements WritableComparable
     return elements;
   }
 
+  /**
+   * Parse the regionName from the row key of the reference meta row.
+   *
+   * @param referenceRowKey row key of the reference meta row
+   * @return region name for the reference row
+   */
+  public static byte[] parseReferenceMetaRow(byte[] referenceRowKey) {
+    // reference row key is prefixed by SNAPSHOT_ROW_PREFIX
+    int prefixLength = HConstants.SNAPSHOT_ROW_PREFIX.length;
+    byte[] regionName = new byte[referenceRowKey.length - prefixLength];
+    System.arraycopy(referenceRowKey, prefixLength, regionName, 0,
+        regionName.length);
+    return regionName;
+  }
+
   /** @return the regionId */
   public long getRegionId(){
     return regionId;

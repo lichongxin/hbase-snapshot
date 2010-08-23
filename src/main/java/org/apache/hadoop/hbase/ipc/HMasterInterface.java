@@ -22,10 +22,12 @@ package org.apache.hadoop.hbase.ipc;
 import org.apache.hadoop.hbase.ClusterStatus;
 import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
+import org.apache.hadoop.hbase.SnapshotDescriptor;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.io.Writable;
 
 import java.io.IOException;
+import java.util.List;
 
 /**
  * Clients interact with the HMasterInterface to gain access to meta-level
@@ -128,7 +130,15 @@ public interface HMasterInterface extends HBaseRPCProtocolVersion {
     throws IOException;
 
   /**
-   * Restore a snapshot.
+   * List existing snapshots.
+   *
+   * @return a list of snapshot descriptor
+   * @throws IOException e
+   */
+  public SnapshotDescriptor[] listSnapshots() throws IOException;
+
+  /**
+   * Restore a table from a snapshot.
    *
    * @param snapshotName snapshot to restore
    * @throws IOException e

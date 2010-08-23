@@ -24,12 +24,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
+import java.util.Random;
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.FileStatus;
+import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.PathFilter;
 import org.apache.hadoop.hbase.Chore;
@@ -37,6 +39,7 @@ import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HServerInfo;
+import org.apache.hadoop.hbase.SnapshotDescriptor;
 import org.apache.hadoop.hbase.RemoteExceptionHandler;
 import org.apache.hadoop.hbase.UnknownScannerException;
 import org.apache.hadoop.hbase.client.Delete;
@@ -113,6 +116,9 @@ abstract class BaseScanner extends Chore {
     Bytes.toBytes(Bytes.toString(HConstants.SPLITB_QUALIFIER) + "_checked");
   // Make the 'true' Writable once only.
   private static byte[] TRUE_WRITABLE_AS_BYTES;
+  // used to generate random accessing time for reference meta row which
+  // has not been accessed before
+  private final static Random rand = new Random();
   static {
     try {
       TRUE_WRITABLE_AS_BYTES = Writables.getBytes(new BooleanWritable(true));
@@ -124,6 +130,7 @@ abstract class BaseScanner extends Chore {
   protected final HMaster master;
 
   protected boolean initialScanComplete;
+  private int maxCheckedRegions;
 
   protected abstract boolean initialScan();
   protected abstract void maintenanceScan();
@@ -137,6 +144,8 @@ abstract class BaseScanner extends Chore {
     super("Scanner for " + (rootRegion ? "-ROOT-":".META.") + " table",
         master.getConfiguration().
         getInt("hbase.master.meta.thread.rescanfrequency", 60 * 1000), stop);
+    this.maxCheckedRegions = master.getConfiguration().
+        getInt("hbase.master.meta.thread.maxcheckedregions", 5);
     this.rootRegion = rootRegion;
     this.master = master;
     this.initialScanComplete = false;
@@ -172,8 +181,8 @@ abstract class BaseScanner extends Chore {
     // are in place.
     NavigableMap<HRegionInfo, Result> splitParents =
       new TreeMap<HRegionInfo, Result>();
+    NavigableMap<Long, Result> referenceRows = new TreeMap<Long, Result>();
     List<byte []> emptyRows = new ArrayList<byte []>();
-    List<Result> referenceRows = new ArrayList<Result>();
     int rows = 0;
     try {
       regionServer =
@@ -189,13 +198,27 @@ abstract class BaseScanner extends Chore {
           break;
         }
         HRegionInfo info = master.getHRegionInfo(values.getRow(), values);
-        // this is a row for reference count information
-        if (Bytes.startsWith(values.getRow(), HConstants.SNAPSHOT_ROW_PREFIX)) {
-          referenceRows.add(values);
-        } else if (info == null) {
-          emptyRows.add(values.getRow());
+        if (info == null) {
+          if (Bytes.startsWith(values.getRow(), HConstants.SNAPSHOT_ROW_PREFIX)) {
+            // this row contains reference count information, add it to a map
+            // which is sorted by the last checking time
+            byte[] lastCheckTime = values.getValue(
+                HConstants.CATALOG_FAMILY, HConstants.LASTCHECKTIME_QUALIFIER);
+            if (lastCheckTime != null) {
+              referenceRows.put(Bytes.toLong(lastCheckTime), values);
+            } else {
+              // use random negative value if the reference information
+              // of a region has not been checked before
+              referenceRows.put(-rand.nextLong(), values);
+            }
+          } else {
+            emptyRows.add(values.getRow());
+          }
           continue;
         }
+
+
+
         String serverAddress = getServerAddress(values);
         long startCode = getStartCode(values);
 
@@ -251,14 +274,20 @@ abstract class BaseScanner extends Chore {
       }
     }
 
-    // check the reference count information, delete the archived HFiles
-    // whose reference count is 0
-    if (referenceRows.size() > 0) {
-      for (Result values : referenceRows) {
-        checkHFilesReference(region.getRegionName(), regionServer, values,
-            master.getArchiveDir());
+    // checking the reference count information, this will synchronize the
+    // reference count in META with the number of reference files for snapshots
+    int checkedRegions = 0;
+    for (Map.Entry<Long, Result> row : referenceRows.entrySet()) {
+      checkReferences(region.getRegionName(), regionServer,
+          row.getValue(), master.getArchiveDir());
+      checkedRegions++;
+      // checking references is expensive, only check regions which
+      // have not been checked for the longest time
+      if (checkedRegions >= maxCheckedRegions) {
+        break;
       }
     }
+
     LOG.info(Thread.currentThread().getName() + " scan of " + rows +
       " row(s) of meta region " + region.toString() + " complete");
   }
@@ -542,29 +571,150 @@ abstract class BaseScanner extends Chore {
   }
 
   /*
-   * Check the reference count information for HFiles. If the reference count
-   * of a HFile is 0, update the .META. first and then delete it from the file
-   * system if it is an archived file.
+   * Check the reference count information for HFiles. Synchronize the reference
+   * count information in META and the number of reference files for snapshots.
+   *
+   * If the reference count information in META is inconsistent with the number
+   * of reference files, update the META with the number of reference files.
+   * Files which are not referred by any reference files would be removed from
+   * META and archive dir.
+   *
+   * @param metaRegionName Name of meta region to look in.
+   * @param srvr Where region resides.
+   * @param values Values of the reference meta row.
+   * @param archiveDir directory for archived files
+   * @throws IOException
    */
-  private void checkHFilesReference(final byte [] metaRegionName,
-      final HRegionInterface srvr, final Result values, final Path archiveDir)
-      throws IOException {
-    Map<byte[], byte[]> filesRefCount = values.getFamilyMap(HConstants.SNAPSHOT_FAMILY);
-    for (Map.Entry<byte[], byte[]> e : filesRefCount.entrySet()) {
-      if (Bytes.toLong(e.getValue()) <= 0) {
-        LOG.info("Found archived HFile whose reference <= 0: "
-            + Bytes.toString(e.getKey()));
-        // 1. delete the file reference information from .META.
-        Delete delete = new Delete(values.getRow());
-        delete.deleteColumn(HConstants.SNAPSHOT_FAMILY, e.getKey());
-        srvr.delete(metaRegionName, delete);
+  private void checkReferences(final byte [] metaRegionName,
+      final HRegionInterface srvr, final Result values,
+      final Path archiveDir) {
+    byte[] regionName = HRegionInfo.parseReferenceMetaRow(values.getRow());
+    String encodedRegionName = HRegionInfo.encodeRegionName(regionName);
+    try {
+      Map<String, Long> referenceFiles =
+        getReferenceFilesForRegion(encodedRegionName);
 
-        // 2. delete the archived file
-        Path filePath = new Path(Bytes.toString(e.getKey()));
-        Path fileArchivePath = FSUtils.getHFileArchivePath(filePath, archiveDir);
-        master.getFileSystem().delete(fileArchivePath, true);
+      // TODO lock reference meta row for this region?
+      Map<byte[], byte[]> referenceInMeta =
+        values.getFamilyMap(HConstants.SNAPSHOT_FAMILY);
+      for (Map.Entry<byte[], byte[]> e : referenceInMeta.entrySet()) {
+        Path srcfile = new Path(Bytes.toString(e.getKey()));
+        if (!referenceFiles.containsKey(srcfile.getName())) {
+          // there is not reference file for this src file, remove it
+          removeArchivedFile(srcfile, archiveDir, values.getRow(),
+              metaRegionName, srvr);
+        } else {
+          long referenceCount = Bytes.toLong(e.getValue());
+          long numOfRefFiles = referenceFiles.get(srcfile.getName());
+          if (referenceCount != numOfRefFiles) {
+            // reference count in META is inconsistent with the number of
+            // reference files, update meta
+            Put put = new Put(values.getRow());
+            put.add(HConstants.SNAPSHOT_FAMILY, e.getKey(),
+                Bytes.toBytes(numOfRefFiles));
+            srvr.put(metaRegionName, put);
+          }
+        }
+      }
+      // update the last checking time
+      Put put = new Put(values.getRow());
+      put.add(HConstants.CATALOG_FAMILY, HConstants.LASTCHECKTIME_QUALIFIER,
+          Bytes.toBytes(System.currentTimeMillis()));
+      srvr.put(metaRegionName, put);
+    } catch (IOException e) {
+      LOG.warn("Failed to check references for region "
+          + Bytes.toStringBinary(regionName), e);
+    }
+  }
+
+  /*
+   * Get all the reference files under snapshots directory for a region
+   *
+   * @param encodedRegionName directory name of the desired region
+   * @return a map whose key is the file name in the this region and
+   *         value is the number of reference files for this region file
+   * @throws IOException
+   */
+  private Map<String, Long> getReferenceFilesForRegion(
+      final String encodedRegionName) throws IOException {
+    Map<String, Long> referenceFiles = new TreeMap<String, Long>();
+    final FileSystem fs = master.getFileSystem();
+    Path snapshotRoot =
+      SnapshotDescriptor.getSnapshotRootDir(master.getRootDir());
+    FileStatus[] snapshots =
+      fs.listStatus(snapshotRoot, new FSUtils.DirFilter(fs));
+    for (FileStatus snapshot : snapshots) {
+      // get regions whose directory name is the same as the passed
+      // encodedRegionName, actually there would be at most one
+      // such region for each snapshot
+      FileStatus[] regions = fs.listStatus(snapshot.getPath(),
+          new PathFilter() {
+            @Override
+            public boolean accept(Path p) {
+              try {
+                if (fs.getFileStatus(p).isDir() &&
+                    p.getName().equals(encodedRegionName)) {
+                  return true;
+                }
+              } catch (IOException e) {
+                LOG.warn("Failed to get file status for file: " + p);
+              }
+              return false;
+            }
+          });
+      for (FileStatus regionDir : regions) {
+        // recursively get all reference files under this region dir
+        List<Path> files =
+          FSUtils.listAllFiles(fs, regionDir.getPath(), true);
+        for (Path file : files) {
+          if (!StoreFile.isReference(file)) {
+            // ignore non-reference files
+            continue;
+          }
+          // reference file name is suffixed with the table name or region name
+          String srcfile = file.getName().substring(0,
+              file.getName().indexOf("."));
+          Long count = referenceFiles.get(srcfile);
+          if (count == null) {
+            referenceFiles.put(srcfile, 1L);
+          } else {
+            referenceFiles.put(srcfile, count + 1);
+          }
+        }
       }
     }
+    return referenceFiles;
+  }
+
+  /*
+   * Remove archived file from both file system and META
+   *
+   * @param srcFile source file of the archived file to be removed
+   * @param archiveDir directory for archived files
+   * @param row row key of the reference meta row
+   * @param metaRegionName
+   * @param srvr
+   * @throws IOException
+   */
+  private void removeArchivedFile(final Path srcFile, final Path archiveDir,
+      final byte[] row, final byte [] metaRegionName,
+      final HRegionInterface srvr) throws IOException {
+    // 1. delete the archived file
+    Path archivedFile = FSUtils.getHFileArchivePath(srcFile, archiveDir);
+    LOG.info("Deleting archived file: " + archivedFile);
+    // ignoring if it doesn't exist
+    if (master.getFileSystem().exists(archivedFile)) {
+      if (!master.getFileSystem().delete(archivedFile, true)) {
+        throw new IOException("Failed to delete archived file: " + archivedFile);
+      }
+    }
+
+    LOG.info("Removing archived file from META: " + srcFile);
+    // 2. delete the file reference information in META
+    Delete delete = new Delete(row);
+    delete.deleteColumn(HConstants.SNAPSHOT_FAMILY,
+        Bytes.toBytes(FSUtils.getPath(srcFile)));
+    srvr.delete(metaRegionName, delete);
   }
 
   /*

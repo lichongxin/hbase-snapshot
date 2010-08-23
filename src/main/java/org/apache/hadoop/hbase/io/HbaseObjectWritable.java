@@ -23,9 +23,7 @@ import java.io.DataOutput;
 import java.io.IOException;
 import java.lang.reflect.Array;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -41,6 +39,7 @@ import org.apache.hadoop.hbase.HMsg;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HServerAddress;
 import org.apache.hadoop.hbase.HServerInfo;
+import org.apache.hadoop.hbase.SnapshotDescriptor;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.client.Delete;
@@ -128,6 +127,9 @@ public class HbaseObjectWritable implements Writable, Configurable {
     addToMap(HServerInfo.class, code++);
     addToMap(HTableDescriptor.class, code++);
     addToMap(MapWritable.class, code++);
+    // HBASE-50
+    addToMap(SnapshotDescriptor.class, code++);
+    addToMap(SnapshotDescriptor[].class, code++);
 
     //
     // HBASE-880

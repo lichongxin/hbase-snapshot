@@ -21,31 +21,22 @@ package org.apache.hadoop.hbase;
 
 import java.io.IOException;
 
-import org.apache.hadoop.hbase.util.Bytes;
-
 /**
- * Thrown if a table should be online/offline but is partial open
+ * Thrown when a snapshot exists but should not
  */
-public class TablePartialOpenException extends IOException {
-  private static final long serialVersionUID = 3571982660065058361L;
-
+public class SnapshotExistsException extends IOException {
+  private static final long serialVersionUID = 1L << 7 - 1L;
   /** default constructor */
-  public TablePartialOpenException() {
+  public SnapshotExistsException() {
     super();
   }
 
   /**
    * Constructor
+   *
    * @param s message
    */
-  public TablePartialOpenException(String s) {
+  public SnapshotExistsException(String s) {
     super(s);
-  }
-
-  /**
-   * @param tableName Name of table that is partial open
-   */
-  public TablePartialOpenException(byte[] tableName) {
-    this(Bytes.toString(tableName));
   }
 }

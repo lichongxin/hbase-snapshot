@@ -145,8 +145,11 @@ public final class HConstants {
   /** Used to construct the name of the snapshot directory */
   public static final String SNAPSHOT_DIR = ".snapshot";
 
-  /** Used to construct the name of the archive directory */
-  public static final String ARCHIVE_DIR = ".deleted";
+  /**
+   * Used to construct the name of the archive directory for HFiles
+   * which are still referenced by snapshots.
+   */
+  public static final String ARCHIVE_DIR = ".archive";
 
   /** Default maximum file size */
   public static final long DEFAULT_MAX_FILE_SIZE = 256 * 1024 * 1024;
@@ -200,6 +203,9 @@ public final class HConstants {
   /** The catalog historian family */
   public static final byte [] CATALOG_HISTORIAN_FAMILY = Bytes.toBytes("historian");
 
+  /** The reference count information family */
+  public static final byte [] SNAPSHOT_FAMILY  = Bytes.toBytes("snapshot");
+
   /** The regioninfo column qualifier */
   public static final byte [] REGIONINFO_QUALIFIER = Bytes.toBytes("regioninfo");
 
@@ -215,11 +221,11 @@ public final class HConstants {
   /** The upper-half split region column qualifier */
   public static final byte [] SPLITB_QUALIFIER = Bytes.toBytes("splitB");
 
-  /** Prefix added to the row for snapshot region in .META. */
-  public static final byte [] SNAPSHOT_ROW_PREFIX = Bytes.toBytes(".SNAPSHOT.");
+  /** The last checking time of reference meta row qualifier */
+  public static final byte [] LASTCHECKTIME_QUALIFIER  = Bytes.toBytes("lastCheckTime");
 
-  /** The reference count family */
-  public static final byte [] SNAPSHOT_FAMILY  = Bytes.toBytes("snapshot");
+  /** Prefix added to the row key of reference meta for snapshot region */
+  public static final byte [] SNAPSHOT_ROW_PREFIX = Bytes.toBytes(".SNAPSHOT.");
 
   // Other constants
 

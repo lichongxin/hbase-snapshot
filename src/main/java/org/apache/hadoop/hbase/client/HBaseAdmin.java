@@ -28,6 +28,7 @@ import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HRegionLocation;
+import org.apache.hadoop.hbase.SnapshotDescriptor;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.MasterNotRunningException;
 import org.apache.hadoop.hbase.RegionException;
@@ -901,8 +902,8 @@ public class HBaseAdmin {
       throw new MasterNotRunningException("master has been shut down");
     }
     HTableDescriptor.isLegalTableName(tableName);
-    // snapshotName has the same rule as table name?
-    // HTableDescriptor.isLegalTableName(snapshotName);
+    // snapshotName has the same rule as table name
+    HTableDescriptor.isLegalTableName(snapshotName);
     try {
       this.master.snapshot(snapshotName, tableName);
     } catch (RemoteException e) {
@@ -911,17 +912,35 @@ public class HBaseAdmin {
   }
 
   /**
-   * Restore a snapshot.
+   * List existing snapshots.
+   *
+   * @return a list of snapshot descriptor for existing snapshots
+   * @throws IOException
+   */
+  public SnapshotDescriptor[] listSnapshots() throws IOException {
+    try {
+      return this.master.listSnapshots();
+    } catch (RemoteException e) {
+      throw RemoteExceptionHandler.decodeRemoteException(e);
+    }
+  }
+
+  /**
+   * Restore the table from a snapshot.
    *
    * @param snapshotName name of the snapshot
    * @throws IOException if a remote or network exception occurs
    */
   public void restoreSnapshot(final byte[] snapshotName) throws IOException {
-    // TODO
+    try {
+      this.master.restoreSnapshot(snapshotName);
+    } catch (RemoteException e) {
+      throw RemoteExceptionHandler.decodeRemoteException(e);
+    }
   }
 
   /**
-   * Restore a snapshot to a new table name.
+   * Restore the snapshot to a different table name.
    *
    * @param snapshotName name of the snapshot
    * @param newTableName name of the new table
@@ -939,7 +958,11 @@ public class HBaseAdmin {
    * @throws IOException if a remote or network exception occurs
    */
   public void deleteSnapshot(final byte[] snapshotName) throws IOException {
-    // TODO
+    try {
+      this.master.deleteSnapshot(snapshotName);
+    } catch (RemoteException e) {
+      throw RemoteExceptionHandler.decodeRemoteException(e);
+    }
   }
 
   /**

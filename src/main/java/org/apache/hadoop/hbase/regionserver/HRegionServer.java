@@ -69,7 +69,7 @@ import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.HServerAddress;
 import org.apache.hadoop.hbase.HServerInfo;
 import org.apache.hadoop.hbase.HServerLoad;
-import org.apache.hadoop.hbase.HSnapshotDescriptor;
+import org.apache.hadoop.hbase.SnapshotDescriptor;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.LeaseListener;
@@ -100,7 +100,7 @@ import org.apache.hadoop.hbase.ipc.HBaseRPCProtocolVersion;
 import org.apache.hadoop.hbase.ipc.HBaseServer;
 import org.apache.hadoop.hbase.ipc.HMasterRegionInterface;
 import org.apache.hadoop.hbase.ipc.HRegionInterface;
-import org.apache.hadoop.hbase.master.SnapshotMonitor.SnapshotStatus;
+import org.apache.hadoop.hbase.regionserver.ZKSnapshotWatcher.RSSnapshotStatus;
 import org.apache.hadoop.hbase.regionserver.metrics.RegionServerMetrics;
 import org.apache.hadoop.hbase.regionserver.wal.HLog;
 import org.apache.hadoop.hbase.replication.regionserver.Replication;
@@ -2087,10 +2087,10 @@ public class HRegionServer implements HRegionInterface,
   /**
    * Perform snapshot for the regions which are served by this region server.
    *
-   * @param snapshot
+   * @param snapshot snapshot to create
    * @throws IOException
    */
-  public void performSnapshot(HSnapshotDescriptor snapshot) throws IOException{
+  public void performSnapshot(SnapshotDescriptor snapshot) throws IOException{
     if (stopRequested.get()) {
       LOG.info("Can't start snapshot on RS: " + serverInfo.getServerName());
       throw new IOException("Server not running");
@@ -2100,87 +2100,100 @@ public class HRegionServer implements HRegionInterface,
       throw new IOException("File system not available");
     }
 
-    // get current log files list and sequence number, any update after
-    // this sequence number will not be included in the snapshot
-    SortedMap<Long, Path> logFiles = hlog.getCurrentLogFiles();
+    // get current log files list, subsequence updates would not be
+    // included in the snapshot
+    Set<String> logFiles = hlog.getCurrentLogFiles();
 
-    // check if all the table regions are ready for snapshot
-    boolean allReady = true;
     List<HRegion> regionsToBackup = new ArrayList<HRegion>();
-    this.lock.readLock().lock();
     try {
-      for(HRegion region : onlineRegions.values()) {
-        byte[] tableName = region.getTableDesc().getName();
-        if (Bytes.equals(tableName, snapshot.getTableName())) {
-          if (!region.startSnapshot()) {
-            allReady = false;
-            break;
+      // check if all the table regions are ready for snapshot
+      this.lock.readLock().lock();
+      try {
+        for(HRegion region : onlineRegions.values()) {
+          byte[] tableName = region.getTableDesc().getName();
+          if (Bytes.equals(tableName, snapshot.getTableName())) {
+            region.startSnapshot();
+            regionsToBackup.add(region);
           }
-          regionsToBackup.add(region);
+        }
+      } finally {
+        this.lock.readLock().unlock();
+      }
+
+      zooKeeperWrapper.registerRSForSnapshot(serverInfo.getServerName(),
+          RSSnapshotStatus.READY);
+      LOG.debug("Started snapshot: " + snapshot + " on RS: " +
+          serverInfo.getServerName());
+
+      if (!regionsToBackup.isEmpty()) {
+        Path snapshotDir = SnapshotDescriptor.getSnapshotDir(rootDir,
+            snapshot.getSnapshotName());
+        // dump log file list and sequence number
+        dumpLogList(logFiles, snapshotDir);
+
+        HTable meta = null;
+        if (Bytes.equals(snapshot.getTableName(), HConstants.META_TABLE_NAME)) {
+          // if this is a meta table, we need update the ROOT table here
+          meta = new HTable(conf, HConstants.ROOT_TABLE_NAME);
+        } else {
+          meta = new HTable(conf, HConstants.META_TABLE_NAME);
+        }
+        // Perform snapshot for each region of the table
+        for(HRegion region : regionsToBackup) {
+          region.completeSnapshot(snapshotDir, meta);
         }
       }
-    } finally {
-      this.lock.readLock().unlock();
+
+      zooKeeperWrapper.registerRSForSnapshot(serverInfo.getServerName(),
+          RSSnapshotStatus.FINISH);
+      LOG.debug("Finished snapshot: " + snapshot + " on RS: " +
+          serverInfo.getServerName());
+    } catch (Exception e) {
+      // if any exception happens, abort snapshot
+      abortSnapshot(regionsToBackup);
+      throw new IOException(e);
     }
+  }
 
-    if (!allReady) {
-      LOG.info("Can't start snapshot on RS: " + serverInfo.getServerName());
-      throw new IOException("Some regions are not ready for snapshot");
+  /*
+   * Quit snapshot for regions which are in snapshot mode
+   *
+   * @param regionsInSnapshot regions in which snapshot is started
+   */
+  void abortSnapshot(List<HRegion> regionsInSnapshot) {
+    for(HRegion region : regionsInSnapshot) {
+      region.quitSnapshot();
     }
-
-    zooKeeperWrapper.registerRSForSnapshot(serverInfo.getServerName(),
-        SnapshotStatus.RS_READY);
-    LOG.debug("Started snapshot: " + snapshot + "on RS: " +
-        serverInfo.getServerName());
-
-    if (regionsToBackup.size() != 0) {
-      Path snapshotDir = HSnapshotDescriptor.getSnapshotDir(rootDir,
-          snapshot.getSnapshotName());
-      // dump log file list and sequence number
-      dumpLogList(logFiles, snapshotDir);
-
-      HTable meta = null;
-      if (Bytes.equals(snapshot.getTableName(), HConstants.META_TABLE_NAME)) {
-        // if this is a meta table, we need update the ROOT table here
-        meta = new HTable(HConstants.ROOT_TABLE_NAME);
-      } else {
-        meta = new HTable(HConstants.META_TABLE_NAME);
-      }
-      // Perform snapshot for each region of the table
-      for(HRegion region : regionsToBackup) {
-        region.completeSnapshot(snapshotDir, meta);
-      }
-    }
-
-    zooKeeperWrapper.registerRSForSnapshot(serverInfo.getServerName(),
-        SnapshotStatus.RS_FINISH);
-    LOG.debug("Finished snapshot: " + snapshot + "on RS: " +
-        serverInfo.getServerName());
   }
 
   /*
    * Dump a file which contains a list of file names of the current logs
-   * and sequence number for this region server so that data in memstore
-   * can be reconstructed from these log files when restore the snapshot
+   * for this region server so that data in memstore can be reconstructed
+   * from these log files when restoring from the snapshot
    */
-  private void dumpLogList(SortedMap<Long, Path> logFiles, Path snapshotDir)
+  private void dumpLogList(Set<String> logFiles, Path snapshotDir)
     throws IOException {
+    Path tmpfile = StoreFile.getUniqueFile(fs, snapshotDir);
+    FSDataOutputStream out = fs.create(tmpfile, true);
+    // keep the number of log files for read
+    try {
+      out.writeInt(logFiles.size());
+      for(String logfile : logFiles) {
+        out.writeUTF(logfile);
+      }
+    } finally {
+      out.close();
+    }
     /*
-     * Keep the old logs list in a file named by the region server name.
+     * Move the old logs list to a file named by the region server name.
      * so each region server has a file under the old logs directory of
      * the snapshot
      */
     Path oldLog = new Path(snapshotDir, HLog.getHLogDirectoryName(serverInfo));
-    FSDataOutputStream out = fs.create(oldLog, true);
-    // keep the number of log files for read
-    try {
-      out.writeInt(logFiles.size());
-      for(Map.Entry<Long, Path> logFile : logFiles.entrySet()) {
-        out.writeLong(logFile.getKey());
-        out.writeUTF(logFile.getValue().getName());
-      }
-    } finally {
-      out.close();
+    fs.mkdirs(oldLog.getParent());
+    if (!fs.rename(tmpfile, oldLog)) {
+      LOG.error("Failed to dump log list for region server " + this);
+      throw new IOException("Failed to dump log list for region server " + this);
     }
   }
 

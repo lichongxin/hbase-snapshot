@@ -1,3 +1,22 @@
+/**
+ * Copyright 2010 The Apache Software Foundation
+ *
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.apache.hadoop.hbase.master;
 
 import java.io.IOException;
@@ -13,7 +32,7 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.PathFilter;
 import org.apache.hadoop.hbase.HConstants;
-import org.apache.hadoop.hbase.HSnapshotDescriptor;
+import org.apache.hadoop.hbase.SnapshotDescriptor;
 import org.apache.hadoop.hbase.util.FSUtils;
 
 /**
@@ -28,9 +47,6 @@ public class SnapshotLogCleaner implements LogCleanerDelegate {
   private Path rootDir;
   private Set<String> hlogs = new HashSet<String>();
 
-  /**
-   * Default constructor. Do nothing
-   */
   public SnapshotLogCleaner() {}
 
   @Override
@@ -39,62 +55,43 @@ public class SnapshotLogCleaner implements LogCleanerDelegate {
     if (this.hlogs.contains(log)) {
       return false;
     }
-
-    /*
-     * This solution makes every miss very expensive to process since we
-     * iterate the snapshot directory to refresh the cache each time.
-     * Actually we only have to refresh the cache once in LogsCleaner.chore.
-     * Move refreshing this cleaner into LogsCleaner.chore?
-     */
-    return !refreshHLogsAndSearch(log);
+    return true;
   }
 
   /**
-   * Search through all the hlogs we have under snapshot dir to refresh the cache
+   * Refresh the HLogs cache to get the current logs which are used
+   * by snapshots under snapshot directory
    *
-   * @param searchedLog log we are searching for, pass null to cache everything
-   *                    that's under the directory of snapshot
-   * @return true if we should keep the searched log
+   * @throws IOException
    */
-  private boolean refreshHLogsAndSearch(String searchedLog) {
+  public void refreshHLogsCache() throws IOException {
     this.hlogs.clear();
-    final boolean lookForLog = searchedLog != null;
 
-    Path snapshotRoot = HSnapshotDescriptor.getSnapshotRootDir(rootDir);
+    Path snapshotRoot = SnapshotDescriptor.getSnapshotRootDir(rootDir);
     PathFilter dirFilter = new FSUtils.DirFilter(fs);
 
-    // refresh the cache with logs under snapshot directory
+    // iterate the snapshots under snapshot directory
     try {
-      // get snapshots under snapshot directory
       FileStatus[] snapshots = fs.listStatus(snapshotRoot, dirFilter);
       for (FileStatus snapshot : snapshots) {
         Path oldLogDir = new Path(snapshot.getPath(),
             HConstants.HREGION_LOGDIR_NAME);
         // get logs list file for each region server
         FileStatus[] rss = fs.listStatus(oldLogDir);
-        for (FileStatus rsLog : rss) {
-          FSDataInputStream in = fs.open(rsLog.getPath());
-          int num = in.readInt();
-          for (int i = 0; i < num; i++) {
-            in.readLong();  // the sequence number, we don't use it here
-            hlogs.add(in.readUTF());
+        if (rss != null) {
+          for (FileStatus rsLog : rss) {
+            FSDataInputStream in = fs.open(rsLog.getPath());
+            int num = in.readInt();
+            for (int i = 0; i < num; i++) {
+              hlogs.add(in.readUTF());
+            }
           }
         }
       }
-
-      if (lookForLog && hlogs.contains(searchedLog)) {
-        LOG.debug("Found log under snapshot directory, keeping: " + searchedLog);
-        return true;
-      }
     } catch (IOException e) {
-      // Keep the log file because we don't know if it is still used by
-      // snapshots
-      LOG.warn("Failed to get old logs for snapshots!", e);
-      return true;
+      LOG.warn("Failed to refresh hlogs cache for snapshots!", e);
+      throw e;
     }
-
-    LOG.debug("Didn't find this log under snapshot dir, deleting: " + searchedLog);
-    return false;
   }
 
   @Override
@@ -110,7 +107,7 @@ public class SnapshotLogCleaner implements LogCleanerDelegate {
       this.rootDir = FSUtils.getRootDir(this.conf);
 
       // initialize the cache
-      refreshHLogsAndSearch(null);
+      refreshHLogsCache();
     } catch (IOException e) {
       LOG.error(e);
     }

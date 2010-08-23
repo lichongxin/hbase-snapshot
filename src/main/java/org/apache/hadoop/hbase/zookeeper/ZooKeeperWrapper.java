@@ -25,7 +25,6 @@ import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -41,9 +40,9 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HServerAddress;
 import org.apache.hadoop.hbase.HServerInfo;
-import org.apache.hadoop.hbase.HSnapshotDescriptor;
+import org.apache.hadoop.hbase.SnapshotDescriptor;
 import org.apache.hadoop.hbase.executor.HBaseEventHandler.HBaseEventType;
-import org.apache.hadoop.hbase.master.SnapshotMonitor.SnapshotStatus;
+import org.apache.hadoop.hbase.regionserver.ZKSnapshotWatcher.RSSnapshotStatus;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Writables;
 import org.apache.zookeeper.CreateMode;
@@ -1316,11 +1315,11 @@ public class ZooKeeperWrapper implements Watcher {
    * Start the snapshot across the cluster via ZooKeeper and set a
    * watch on snapshot directory.
    *
-   * @param snapshot
-   * @return true if data was set on snapshot znode, false otherwise
-   * @throws IOException
+   * @param snapshot snapshot to create
+   * @throws IOException if failed to start snapshot on ZooKeeper
    */
-  public boolean startSnapshot(final HSnapshotDescriptor snapshot) {
+  public void startSnapshot(final SnapshotDescriptor snapshot)
+  throws IOException {
     try {
       // create and watch status znodes: ready and finish
       createZNodeIfNotExists(snapshotReadyZNode);
@@ -1329,105 +1328,114 @@ public class ZooKeeperWrapper implements Watcher {
       byte[] data = Writables.getBytes(snapshot);
       zooKeeper.setData(snapshotRootZNode, data, -1);
       LOG.debug("<" + instanceName + ">" + "Starting snapshot " + snapshot);
-      return true;
     } catch (KeeperException e) {
-      LOG.error("<" + instanceName + ">" + "Failed to start snapshot " + snapshot, e);
-      return false;
+      LOG.error("<" + instanceName + ">" + "Failed to start snapshot "
+          + snapshot, e);
+      throw new IOException(e);
     } catch (InterruptedException e) {
-      LOG.error("<" + instanceName + ">" + "Failed to start snapshot " + snapshot, e);
-      return false;
+      LOG.error("<" + instanceName + ">" + "Failed to start snapshot "
+          + snapshot, e);
+      throw new IOException(e);
     } catch (IOException e ) {
-      LOG.error("<" + instanceName + ">" + "Failed to start snapshot " + snapshot, e);
-      return false;
+      LOG.error("<" + instanceName + ">" + "Failed to start snapshot "
+          + snapshot, e);
+      throw new IOException(e);
     }
   }
 
   /**
    * Abort the snapshot across the cluster via ZooKeeper.
    *
-   * @return true if data was set on snapshot znode, false otherwise
+   * @throws IOException if failed to abort snapshot on ZooKeeper
    */
-  public boolean abortSnapshot() {
+  public void abortSnapshot() throws IOException {
     try {
       zooKeeper.setData(snapshotRootZNode, HConstants.EMPTY_BYTE_ARRAY, -1);
       LOG.debug("<" + instanceName + ">" + "Aborting snapshot");
-      return true;
     } catch (KeeperException e) {
       LOG.error("<" + instanceName + ">" + "Failed to abort snapshot", e);
-      return false;
+      throw new IOException(e);
     } catch (InterruptedException e) {
       LOG.error("<" + instanceName + ">" + "Failed to abort snapshot", e);
-      return false;
+      throw new IOException(e);
     }
   }
 
   /**
-   * Create RS znode under corresponding status directory.
-   * For a RS, the status of the snapshot could be
+   * Create RS znode under corresponding status directory. The status of
+   * snapshot for a region server could be:
    * <code>SnapshotStatus.RS_READY</code> or <code>SnapshotStatus.RS_FINISH</code>
    *
-   * @param serverName
-   * @param status
+   * @param serverName region server name
+   * @param status status of the region server
+   * @throws IOException if failed to register the region server
    */
-  public void registerRSForSnapshot(final String serverName, final SnapshotStatus status) {
-    if (!exists(snapshotReadyZNode, false) ||
-        !exists(snapshotFinishZNode, false)) {
-      throw new RuntimeException("Ready/Finish directory doesn't exist for snapshot");
-    }
-
+  public void registerRSForSnapshot(final String serverName,
+      final RSSnapshotStatus status) throws IOException {
     try {
-      if (status == SnapshotStatus.RS_READY) {
-        String rsReadyPath = snapshotReadyZNode + ZNODE_PATH_SEPARATOR + serverName;
-        zooKeeper.create(rsReadyPath, null, Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL);
-      } else if (status == SnapshotStatus.RS_FINISH) {
-        String rsFinishPath = snapshotFinishZNode + ZNODE_PATH_SEPARATOR + serverName;
-        zooKeeper.create(rsFinishPath, null, Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL);
+      if (status == RSSnapshotStatus.READY) {
+        String rsReadyPath =
+          snapshotReadyZNode + ZNODE_PATH_SEPARATOR + serverName;
+        zooKeeper.create(rsReadyPath, null, Ids.OPEN_ACL_UNSAFE,
+            CreateMode.EPHEMERAL);
+      } else if (status == RSSnapshotStatus.FINISH) {
+        String rsFinishPath =
+          snapshotFinishZNode + ZNODE_PATH_SEPARATOR + serverName;
+        zooKeeper.create(rsFinishPath, null, Ids.OPEN_ACL_UNSAFE,
+            CreateMode.EPHEMERAL);
       } else {
         throw new RuntimeException("Invalid snapshot status: " + status);
       }
-      LOG.debug("<" + instanceName + ">" + "Created ZNode for RS " + serverName +
-          " under snapshot " + status + " status");
+      LOG.debug("<" + instanceName + ">" + "Created ZNode for RS "
+          + serverName + " under snapshot " + status + " status");
     } catch (KeeperException e) {
-      LOG.error("<" + instanceName + ">" + "Failed to register RS ZNode for snapshot", e);
+      LOG.error("<" + instanceName + ">" + "Failed to register RS ZNode" + 
+          " for snapshot", e);
+      throw new IOException(e);
     } catch (InterruptedException e) {
-      LOG.error("<" + instanceName + ">" + "Failed to register RS ZNode for snapshot", e);
+      LOG.error("<" + instanceName + ">" + "Failed to register RS ZNode" +
+          " for snapshot", e);
+      throw new IOException(e);
     }
   }
 
   /**
-   * Remove a RS node under corresponding status directory.
-   * @param serverName
-   * @param status
+   * Remove the RS node under corresponding status directory.
+   *
+   * @param serverName region server name
+   * @param status status from which the region server node is removed
    */
-  public void removeRSForSnapshot(final String serverName, final SnapshotStatus status) {
-    if (!exists(snapshotReadyZNode, false) ||
-        !exists(snapshotFinishZNode, false)) {
-      LOG.debug("Ready/Finish directory has been removed for snapshot, skipping");
-    }
-
+  public void removeRSForSnapshot(final String serverName,
+      final RSSnapshotStatus status) {
     try {
-      if (status == SnapshotStatus.RS_READY) {
-        String rsReadyPath = snapshotReadyZNode + ZNODE_PATH_SEPARATOR + serverName;
+      if (status == RSSnapshotStatus.READY) {
+        String rsReadyPath =
+          snapshotReadyZNode + ZNODE_PATH_SEPARATOR + serverName;
         this.deleteZNode(rsReadyPath);
-      } else if (status == SnapshotStatus.RS_FINISH) {
-        String rsFinishPath = snapshotFinishZNode + ZNODE_PATH_SEPARATOR + serverName;
+      } else if (status == RSSnapshotStatus.FINISH) {
+        String rsFinishPath =
+          snapshotFinishZNode + ZNODE_PATH_SEPARATOR + serverName;
         this.deleteZNode(rsFinishPath);
       } else {
         throw new RuntimeException("Invalid snapshot status: " + status);
       }
-      LOG.debug("<" + instanceName + ">" + "Remove ZNode for RS " + serverName +
-          " under snapshot " + status + " status");
+      LOG.debug("<" + instanceName + ">" + "Remove ZNode for RS "
+          + serverName + " under snapshot " + status + " status");
     } catch (KeeperException.NoNodeException e) {
       // ok, move on
     } catch (KeeperException e) {
-      LOG.error("<" + instanceName + ">" + "Failed to remove RS ZNode for snapshot", e);
+      LOG.error("<" + instanceName + ">" +
+          "Failed to remove RS ZNode for snapshot", e);
     } catch (InterruptedException e) {
-      LOG.error("<" + instanceName + ">" + "Failed to remove RS ZNode for snapshot", e);
+      LOG.error("<" + instanceName + ">" +
+          "Failed to remove RS ZNode for snapshot", e);
+      Thread.currentThread().interrupt();
     }
   }
 
   /**
-   * Clean up the snapshot directory before a snapshot is started
+   * Clean up the snapshot directory before a snapshot is started or
+   * after a snapshot is created.
    */
   public void cleanupSnapshotZNode() {
     try {
@@ -1437,9 +1445,12 @@ public class ZooKeeperWrapper implements Watcher {
     } catch (KeeperException.NoNodeException e) {
       // ok, move on
     } catch (KeeperException e) {
-      LOG.error("<" + instanceName + ">" + "Failed to clean up snapshot ZNode", e);
+      LOG.error("<" + instanceName + ">" +
+          "Failed to clean up snapshot ZNode", e);
     } catch (InterruptedException e) {
-      LOG.error("<" + instanceName + ">" + "Failed to clean up snapshot ZNode", e);
+      LOG.error("<" + instanceName + ">" +
+          "Failed to clean up snapshot ZNode", e);
+      Thread.currentThread().interrupt();
     }
   }
 }
