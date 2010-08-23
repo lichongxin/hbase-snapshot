@@ -26,9 +26,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableSet;
-import java.util.Set;
 import java.util.SortedSet;
-import java.util.TreeSet;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
@@ -43,7 +41,6 @@ import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.KeyValue;
-import org.apache.hadoop.hbase.KeyValue.KeyComparator;
 import org.apache.hadoop.hbase.RemoteExceptionHandler;
 import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.HTable;
@@ -913,7 +910,7 @@ public class Store implements HeapSize {
         // Tell observers that list of StoreFiles has changed.
         notifyChangedReadersObservers();
         // Finally, delete old store files.
-        deleteStoreFiles(compactedFiles);
+        region.deleteStoreFiles(compactedFiles);
       } catch (IOException e) {
         e = RemoteExceptionHandler.checkIOException(e);
         LOG.error("Failed replacing compacted files in " + this.storeNameStr +
@@ -935,36 +932,6 @@ public class Store implements HeapSize {
       this.lock.writeLock().unlock();
     }
     return result;
-  }
-
-  /*
-   * Delete the old store files after compaction. If a store file
-   * is referred by snapshots, that is the reference count is above 0,
-   * archive the store file in passed oldFilesDir.
-   */
-  private void deleteStoreFiles(List<StoreFile> storeFiles)
-    throws IOException {
-    Path oldFilesDir = FSUtils.getOldHFilesDir(conf);
-    HTable metaTable = new HTable(HConstants.META_TABLE_NAME);
-
-    // the .META. row which contains reference count information for this region
-    byte[] row = region.getRegionInfo().getReferenceMetaRow();
-    Get get = new Get(row);
-    Result result = metaTable.get(get);
-    Map<byte[], byte[]> filesRefCount = result.getFamilyMap(HConstants.SNAPSHOT_FAMILY);
-    for (StoreFile file : storeFiles) {
-      byte[] path = Bytes.toBytes(FSUtils.getPath(file.getPath()));
-      if (filesRefCount != null && filesRefCount.containsKey(path)) {
-        long refCount = Bytes.toLong(filesRefCount.get(path));
-        if (refCount > 0) {
-          LOG.debug("Archiving old store files: " + file.getPath());
-          FSUtils.archiveHFile(fs, file.getPath(), oldFilesDir);
-          continue;
-        }
-      }
-      // otherwise delete the file
-      file.deleteReader();
-    }
   }
 
   // ////////////////////////////////////////////////////////////////////////////

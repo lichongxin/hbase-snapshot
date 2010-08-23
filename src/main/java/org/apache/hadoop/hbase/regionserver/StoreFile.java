@@ -23,7 +23,10 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.FileUtil;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hbase.HBaseConfiguration;
+import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.KeyValue.KVComparator;
 import org.apache.hadoop.hbase.client.Scan;
@@ -37,6 +40,7 @@ import org.apache.hadoop.hbase.io.hfile.LruBlockCache;
 import org.apache.hadoop.hbase.util.BloomFilter;
 import org.apache.hadoop.hbase.util.ByteBloomFilter;
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.hbase.util.FSUtils;
 import org.apache.hadoop.hbase.util.Hash;
 import org.apache.hadoop.hbase.util.Writables;
 import org.apache.hadoop.io.RawComparator;
@@ -195,7 +199,7 @@ public class StoreFile {
     this.inMemory = inMemory;
     if (isReference(p)) {
       this.reference = Reference.read(fs, p);
-      this.referencePath = getReferredToFile(this.path);
+      this.referencePath = getReferredToFile(this.path, reference);
     }
     // ignore if the column family config says "no bloom filter"
     // even if there is one in the hfile.
@@ -245,9 +249,8 @@ public class StoreFile {
    */
   public static boolean isReference(final Path p, final Matcher m) {
     if (m == null || !m.matches()) {
-      LOG.warn("Failed match of store file name " + p.toString());
-      throw new RuntimeException("Failed match of store file name " +
-          p.toString());
+      LOG.debug("Failed match of store file name " + p.toString());
+      return false;
     }
     return m.groupCount() > 1 && m.group(2) != null;
   }
@@ -255,26 +258,48 @@ public class StoreFile {
   /*
    * Return path to the file referred to by a Reference.  Presumes a directory
    * hierarchy of <code>${hbase.rootdir}/tablename/regionname/familyname</code>.
+   *
    * @param p Path to a Reference file.
+   * @param reference the reference type
    * @return Calculated path to parent region file.
    * @throws IOException
    */
-  static Path getReferredToFile(final Path p) {
+  static Path getReferredToFile(final Path p, final Reference reference) {
     Matcher m = REF_NAME_PARSER.matcher(p.getName());
     if (m == null || !m.matches()) {
       LOG.warn("Failed match of store file name " + p.toString());
       throw new RuntimeException("Failed match of store file name " +
           p.toString());
     }
-    // Other region name is suffix on the passed Reference file name
-    String otherRegion = m.group(2);
-    // Tabledir is up two directories from where Reference was written.
-    Path tableDir = p.getParent().getParent().getParent();
-    String nameStrippedOfSuffix = m.group(1);
-    // Build up new path with the referenced region in place of our current
-    // region in the reference path.  Also strip regionname suffix from name.
-    return new Path(new Path(new Path(tableDir, otherRegion),
-      p.getParent().getName()), nameStrippedOfSuffix);
+    Path srcFile = null;
+    // this reference is created for table snapshot and it refers to
+    // another store file in another table
+    if (reference.isEntireRange()) {
+      // Other table name is suffix on the passed Reference file name
+      Configuration c = HBaseConfiguration.create();
+      String rootdir = c.get(HConstants.HBASE_DIR);
+      String otherTable = m.group(2);
+      String srcFilename = m.group(1);
+      String region = p.getParent().getParent().getName();
+      String store = p.getParent().getName();
+      srcFile = new Path(new Path(new Path(
+          new Path(rootdir, otherTable), region), store), srcFilename);
+    }
+    // this reference is created when region splitting and it refers to
+    // top or bottom half of a store file in another region but the same
+    // table
+    else {
+      // Other region name is suffix on the passed Reference file name
+      String otherRegion = m.group(2);
+      // Tabledir is up two directories from where Reference was written.
+      Path tableDir = p.getParent().getParent().getParent();
+      String nameStrippedOfSuffix = m.group(1);
+      // Build up new path with the referenced region in place of our current
+      // region in the reference path.  Also strip regionname suffix from name.
+      srcFile = new Path(new Path(new Path(tableDir, otherRegion),
+          p.getParent().getName()), nameStrippedOfSuffix);
+    }
+    return srcFile;
   }
 
   /**
@@ -376,8 +401,7 @@ public class StoreFile {
     }
 
     if (isReference()) {
-      this.reader = new HalfStoreFileReader(this.fs, this.referencePath,
-          getBlockCache(), this.reference);
+      this.reader = openReferenceReader();
     } else {
       this.reader = new Reader(this.fs, this.path, getBlockCache(),
           this.inMemory);
@@ -395,7 +419,7 @@ public class StoreFile {
       // subsume the other.
       this.sequenceid = Bytes.toLong(b);
       if (isReference()) {
-        if (Reference.isTopFileRegion(this.reference.getFileRegion())) {
+        if (reference.isTopFileRange()) {
           this.sequenceid += 1;
         }
       }
@@ -427,6 +451,36 @@ public class StoreFile {
       this.reader.timeRangeTracker = null;
     }
     return this.reader;
+  }
+
+  /*
+   * Create new reader instance for the reference file
+   */
+  private Reader openReferenceReader()
+  throws IOException {
+    Path srcPath = referencePath;
+    if (!fs.exists(srcPath)) {
+      // this file has been archived, find it in the archive dir
+      Path archiveDir = new Path(FSUtils.getRootDir(conf),
+          HConstants.ARCHIVE_DIR);
+      srcPath = FSUtils.getHFileArchivePath(srcPath, archiveDir);
+      if (!fs.exists(srcPath)) {
+        LOG.error("Could not find the reference file: " + referencePath);
+        throw new IOException("Could not find the reference file: "
+            + referencePath);
+      }
+    }
+    referencePath = srcPath;
+
+    // reference to top or bottom half of a store file
+    if (!reference.isEntireRange()) {
+      return new HalfStoreFileReader(this.fs, this.referencePath,
+          getBlockCache(), this.reference);
+    }
+
+    // reference to another entire store file in a different table
+    return new Reader(this.fs, this.referencePath, getBlockCache(),
+        this.inMemory);
   }
 
   /**
@@ -656,6 +710,26 @@ public class StoreFile {
     return r.write(fs, p);
   }
 
+  /**
+   * Create a reference to <code>srcfile</code> under <code>dstdir</code>.
+   * If the <code>srcfile</code> itself is already a reference file, then
+   * copy it to the <code>dstdir</code> directly.
+   *
+   * @return path to the created reference file
+   * @throws IOException
+   */
+  public static Path createReference(final Path srcfile, final Path dstdir,
+      final FileSystem fs, final Configuration conf) throws IOException {
+    Path referenceFile = null;
+    if (isReference(srcfile)) {
+      // copy the file directly if it is already a reference file
+      referenceFile = new Path(dstdir, srcfile.getName());
+      FileUtil.copy(fs, srcfile, fs, referenceFile, false, conf);
+    } else {
+      referenceFile = Reference.createReferenceFile(fs, srcfile, dstdir);
+    }
+    return referenceFile;
+  }
 
   /**
    * A StoreFile writer.  Use this to read/write HBase Store Files. It is package

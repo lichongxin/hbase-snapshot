@@ -70,7 +70,7 @@ public class HalfStoreFileReader extends StoreFile.Reader {
     // not splittable.
     this.splitkey = r.getSplitKey();
     // Is it top or bottom half?
-    this.top = Reference.isTopFileRegion(r.getFileRegion());
+    this.top = r.isTopFileRange(); 
   }
 
   protected boolean isTop() {

@@ -249,8 +249,8 @@ public class LoadIncrementalHFiles extends Configured implements Tool {
       Path bottomOut, Path topOut) throws IOException
   {
     // Open reader with no block cache, and not in-memory
-    Reference topReference = new Reference(splitKey, Range.top);
-    Reference bottomReference = new Reference(splitKey, Range.bottom);
+    Reference topReference = new Reference(splitKey, Range.TOP);
+    Reference bottomReference = new Reference(splitKey, Range.BOTTOM);
 
     copyHFileHalf(conf, inFile, topOut, topReference, familyDesc);
     copyHFileHalf(conf, inFile, bottomOut, bottomReference, familyDesc);

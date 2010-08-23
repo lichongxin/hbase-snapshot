@@ -33,16 +33,21 @@ import org.apache.hadoop.hbase.util.FSUtils;
 import org.apache.hadoop.io.Writable;
 
 /**
- * A reference to the top or bottom half of a store file.  The file referenced
- * lives under a different region.  References are made at region split time.
+ * A reference to the another store file or top or bottom half of a store file.
+ * The file referenced lives under a different table or a different region.
+ * References are made at table snapshot or region split time.
  *
- * <p>References work with a special half store file type.  References know how
- * to write out the reference format in the file system and are whats juggled
- * when references are mixed in with direct store files.  The half store file
- * type is used reading the referred to file.
+ * <p>For references made at table snapshot, they refer to the store files of
+ * that table. For references made at region split, they work with a special
+ * half store file type which is used reading the referred to file.
+ *
+ * <p>References know how to write out the reference format in the file system
+ * and are whats juggled when references are mixed in with direct store files.
  *
  * <p>References to store files located over in some other region look like
  * this in the file system
+ * <code>1278437856009925445.tablename</code>:
+ * i.e. an id followed by the table name of the referenced table.
  * <code>1278437856009925445.3323223323</code>:
  * i.e. an id followed by hash of the referenced region.
  * Note, a region is itself not splitable if it has instances of store file
@@ -50,19 +55,19 @@ import org.apache.hadoop.io.Writable;
  */
 public class Reference implements Writable {
   private byte [] splitkey;
-  private Range region;
+  private Range range;
 
   /**
    * For split HStoreFiles, it specifies if the file covers the lower half or
    * the upper half of the key range
    */
   public static enum Range {
-    /** StoreFile contains the entire key range */
-    entire    (0),
-    /** StoreFile contains upper half of key range */
-    top       (1),
     /** StoreFile contains lower half of key range */
-    bottom    (2);
+    BOTTOM    (0),
+    /** StoreFile contains upper half of key range */
+    TOP       (1),
+    /** StoreFile contains the entire key range */
+    ENTIRE    (2);
 
     private final byte value;
 
@@ -77,11 +82,11 @@ public class Reference implements Writable {
     public static Range fromByte(byte value) {
       switch(value) {
       case 0:
-        return Range.entire;
+        return Range.BOTTOM;
       case 1:
-        return Range.top;
+        return Range.TOP;
       case 2:
-        return Range.bottom;
+        return Range.ENTIRE;
 
       default:
           throw new RuntimeException("Invalid byte value for Reference.Range");
@@ -97,22 +102,22 @@ public class Reference implements Writable {
   public Reference(final byte [] splitRow, final Range fr) {
     this.splitkey = splitRow == null?
       null: KeyValue.createFirstOnRow(splitRow).getKey();
-    this.region = fr;
+    this.range = fr;
   }
 
   /**
    * Used by serializations.
    */
   public Reference() {
-    this(null, Range.bottom);
+    this(null, Range.BOTTOM);
   }
 
   /**
    *
    * @return Range
    */
-  public Range getFileRegion() {
-    return this.region;
+  public Range getFileRange() {
+    return this.range;
   }
 
   /**
@@ -123,30 +128,47 @@ public class Reference implements Writable {
   }
 
   /**
+   * @return true if the range is Range.ENTIRE
+   */
+  public boolean isEntireRange() {
+    return range.equals(Range.ENTIRE);
+  }
+
+  /**
+   * @return true if the range is Range.TOP
+   */
+  public boolean isTopFileRange() {
+    return range.equals(Range.TOP);
+  }
+
+  /**
    * @see java.lang.Object#toString()
    */
   @Override
   public String toString() {
-    return "" + this.region;
+    return "" + this.range;
   }
 
   // Make it serializable.
 
   public void write(DataOutput out) throws IOException {
     // Write the byte value of the range
-    out.write(region.getByteValue());
+    out.write(range.getByteValue());
     Bytes.writeByteArray(out, this.splitkey);
   }
 
   public void readFields(DataInput in) throws IOException {
-    this.region = Range.fromByte(in.readByte());
+    this.range = Range.fromByte(in.readByte());
     this.splitkey = Bytes.readByteArray(in);
   }
 
-  public static boolean isTopFileRegion(final Range r) {
-    return r.equals(Range.top);
-  }
-
+  /**
+   * Write this reference into the given path.
+   * @param fs FileSystem
+   * @param p reference file path
+   * @return path to the reference file
+   * @throws IOException
+   */
   public Path write(final FileSystem fs, final Path p)
   throws IOException {
     FSUtils.create(fs, p);
@@ -176,5 +198,28 @@ public class Reference implements Writable {
     } finally {
       in.close();
     }
+  }
+
+  /**
+   * Create a reference file for <code>srcFile</code> under the passed
+   * <code>dstDir</code>
+   *
+   * @param fs FileSystem
+   * @param srcFile file to be referred
+   * @param dstDir directory where reference file is created
+   * @return path to the reference file
+   * @throws IOException if creating reference file fails
+   */
+  public static Path createReferenceFile(final FileSystem fs,
+      final Path srcFile, final Path dstDir) throws IOException {
+    // A reference to the entire store file.
+    Reference r = new Reference(null, Range.ENTIRE);
+
+    String parentTableName =
+      srcFile.getParent().getParent().getParent().getName();
+    // Write reference with same file id only with the other table name
+    // as suffix.
+    Path p = new Path(dstDir, srcFile.getName() + "." + parentTableName);
+    return r.write(fs, p);
   }
 }

@@ -26,6 +26,7 @@ import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.FileUtil;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.PathFilter;
 import org.apache.hadoop.hbase.HConstants;
@@ -44,6 +45,7 @@ import java.io.DataInputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -659,54 +661,67 @@ public class FSUtils {
   /**
    * Archive HFile of the a table into the archiveDir
    *
-   * @param fs
-   * @param srcFile source file to be archived
-   * @param archiveDir
+   * @param fs FileSystem
+   * @param srcFile file to be archived
+   * @param archiveDir directory which contains the archived files
    * @throws IOException
    */
   public static void archiveHFile(final FileSystem fs, final Path srcFile,
       final Path archiveDir) throws IOException {
-    if (fs.exists(archiveDir)) {
-      fs.mkdirs(archiveDir);
-      LOG.info("Create archive directory: " + archiveDir);
-    }
-
     Path dstFile = getHFileArchivePath(srcFile, archiveDir);
     LOG.info("Archive deleted file " + srcFile + " to " + dstFile);
     if (!fs.exists(dstFile.getParent())) {
-      fs.mkdirs(dstFile.getParent());
+      if (!fs.mkdirs(dstFile.getParent())) {
+        LOG.warn("Failed to create dir: " + dstFile.getParent());
+        throw new IOException("Failed to create dir: " + dstFile.getParent());
+      }
     }
-    boolean result = fs.rename(srcFile, dstFile);
-    System.out.println(result);
+    fs.rename(srcFile, dstFile);
   }
 
-  public static Path getHFileArchivePath(final Path srcFile, final Path archiveDir) {
+  /**
+   * Get the archive path for <code>srcFile</code> in directory
+   * <code>archiveDir</code>
+   *
+   * @param srcFile file to be archived or has been archived
+   * @param archiveDir directory which contains the archived files
+   * @return path to the archive file
+   */
+  public static Path getHFileArchivePath(final Path srcFile,
+      final Path archiveDir) {
     String family = srcFile.getParent().getName();
     String region = srcFile.getParent().getParent().getName();
     String table = srcFile.getParent().getParent().getParent().getName();
 
-    Path dstDir = new Path(new Path(new Path(archiveDir, table), region), family);
-
-    return new Path(dstDir, srcFile.getName());
+    return new Path(new Path(new Path(new Path(archiveDir,
+        table), region), family), srcFile.getName());
   }
 
   /**
-   * Create a reference for srcFile under the passed dstDir
+   * Get all files under the passed <code>dir</code>
    *
-   * @param fs
-   * @param srcFile
-   * @param dstDir
-   * @return
-   * @throws IOException
+   * @param fs FileSystem
+   * @param dir path to the directory
+   * @param recursive whether get files recursively
+   * @return a list of files under this directory
+   * @throws IOException  if listing all files fails
    */
-  public static Path createFileReference(final FileSystem fs,
-      final Path srcFile, final Path dstDir) throws IOException {
-    // A reference to the entire store file.
-    Reference r = new Reference(null, Range.entire);
-
-    String parentRegionName = srcFile.getParent().getParent().getName();
-    // reference has the same file name as src file
-    Path p = new Path(dstDir, srcFile.getName() + "." + parentRegionName);
-    return r.write(fs, p);
+  public static List<Path> listAllFiles(final FileSystem fs, final Path dir,
+      final boolean recursive) throws IOException {
+    List<Path> fileList = new ArrayList<Path>();
+    if (!fs.exists(dir)) {
+      return fileList;
+    }
+    FileStatus[] files = fs.listStatus(dir);
+    for (FileStatus file : files) {
+      if (file.isDir()) {
+        if (recursive) {
+          fileList.addAll(listAllFiles(fs, file.getPath(), true));
+        }
+      } else {
+        fileList.add(file.getPath());
+      }
+    }
+    return fileList;
   }
 }
