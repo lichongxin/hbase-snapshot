@@ -464,6 +464,28 @@ Release 0.21.0 - Unreleased
    HBASE-2755  Duplicate assignment of a region after region server recovery
                (Kannan Muthukkaruppan via Stack)
    HBASE-2892  Replication metrics aren't updated
+   HBASE-2461  Split doesn't handle IOExceptions when creating new region
+               reference files
+   HBASE-2871  Make "start|stop" commands symmetric for Master & Cluster
+               (Nicolas Spiegelberg via Stack)
+   HBASE-2901  HBASE-2461 broke build
+   HBASE-2823  Entire Row Deletes not stored in Row+Col Bloom
+               (Alexander Georgiev via Stack)
+   HBASE-2897  RowResultGenerator should handle NoSuchColumnFamilyException
+   HBASE-2905  NPE when inserting mass data via REST interface (Sandy Yin via
+               Andrew Purtell)
+   HBASE-2908  Wrong order of null-check [in TIF] (Libor Dener via Stack)
+   HBASE-2909  SoftValueSortedMap is broken, can generate NPEs
+   HBASE-2919  initTableReducerJob: Unused method parameter
+               (Libor Dener via Stack)
+   HBASE-2923  Deadlock between HRegion.internalFlushCache and close
+   HBASE-2927  BaseScanner gets stale HRegionInfo in some race cases
+   HBASE-2928  Fault in logic in BinaryPrefixComparator leads to
+               ArrayIndexOutOfBoundsException (pranav via jgray)
+   HBASE-2924  TestLogRolling doesn't use the right HLog half the time
+   HBASE-2931  Do not throw RuntimeExceptions in RPC/HbaseObjectWritable
+               code, ensure we log and rethrow as IOE
+               (Karthik Ranganathan via Stack)
 
   IMPROVEMENTS
    HBASE-1760  Cleanup TODOs in HTable
@@ -820,6 +842,17 @@ Release 0.21.0 - Unreleased
    HBASE-2886  Add search box to site (Alex Baranau via Stack)
    HBASE-2792  Create a better way to chain log cleaners
                (Chongxin Li via Stack)
+   HBASE-2844  Capping the number of regions (Pranav Khaitan via Stack)
+   HBASE-2870  Add Backup CLI Option to HMaster (Nicolas Spiegelberg via Stack)
+   HBASE-2868  Do some small cleanups in org.apache.hadoop.hbase.regionserver.wal
+               (Alex Newman via Stack)
+   HBASE-1660  HBASE-1660 script to handle rolling restarts
+               (Nicolas Spiegelberg via Stack)
+   HBASE-1517  Implement inexpensive seek operations in HFile (Pranav via Ryan)
+   HBASE-2903  ColumnPrefix filtering (Pranav via Ryan)
+   HBASE-2904  Smart seeking using filters (Pranav via Ryan)
+   HBASE-2922  HLog preparation and cleanup are done under the updateLock, 
+               major slowdown
 
   NEW FEATURES
    HBASE-1961  HBase EC2 scripts

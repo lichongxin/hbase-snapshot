@@ -126,7 +126,7 @@ import org.apache.zookeeper.Watcher.Event.KeeperState;
  * the HMaster. There are many HRegionServers in a single HBase deployment.
  */
 public class HRegionServer implements HRegionInterface,
-    HBaseRPCErrorHandler, Runnable, Watcher, Stoppable {
+    HBaseRPCErrorHandler, Runnable, Watcher, Stoppable, OnlineRegions {
   public static final Log LOG = LogFactory.getLog(HRegionServer.class);
   private static final HMsg REPORT_EXITING = new HMsg(Type.MSG_REPORT_EXITING);
   private static final HMsg REPORT_QUIESCED = new HMsg(Type.MSG_REPORT_QUIESCED);
@@ -1476,12 +1476,7 @@ public class HRegionServer implements HRegionInterface,
         }
         return;
       }
-      this.lock.writeLock().lock();
-      try {
-        this.onlineRegions.put(mapKey, region);
-      } finally {
-        this.lock.writeLock().unlock();
-      }
+      addToOnlineRegions(region);
     }
     try {
       HMsg hmsg = new HMsg(HMsg.Type.MSG_REPORT_OPEN, regionInfo);
@@ -2271,13 +2266,16 @@ public class HRegionServer implements HRegionInterface,
     return result;
   }
 
-  /**
-   * This method removes HRegion corresponding to hri from the Map of onlineRegions.
-   *
-   * @param hri the HRegionInfo corresponding to the HRegion to-be-removed.
-   * @return the removed HRegion, or null if the HRegion was not in onlineRegions.
-   */
-  HRegion removeFromOnlineRegions(HRegionInfo hri) {
+  public void addToOnlineRegions(final HRegion r) {
+    this.lock.writeLock().lock();
+    try {
+      this.onlineRegions.put(Bytes.mapKey(r.getRegionInfo().getRegionName()), r);
+    } finally {
+      this.lock.writeLock().unlock();
+    }
+  }
+
+  public HRegion removeFromOnlineRegions(HRegionInfo hri) {
     this.lock.writeLock().lock();
     HRegion toReturn = null;
     try {
@@ -2670,5 +2668,9 @@ public class HRegionServer implements HRegionInterface,
       (Class<? extends HRegionServer>) conf.getClass(HConstants.REGION_SERVER_IMPL,
         HRegionServer.class);
     doMain(args, regionServerClass);
+  }
+
+  public int getNumberOfOnlineRegions() {
+    return onlineRegions.size();
   }
 }

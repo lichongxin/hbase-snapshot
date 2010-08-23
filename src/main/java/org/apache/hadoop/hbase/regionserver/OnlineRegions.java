@@ -17,33 +17,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.hadoop.hbase.util;
+package org.apache.hadoop.hbase.regionserver;
 
-import java.lang.ref.ReferenceQueue;
-import java.lang.ref.SoftReference;
-import java.util.Map;
+import org.apache.hadoop.hbase.HRegionInfo;
 
 /**
- * A SoftReference derivative so that we can track down what keys to remove.
+ * Add and remove online regions.
  */
-class SoftValue<K, V> extends SoftReference<V> implements Map.Entry<K, V> {
-  private final K key;
+interface OnlineRegions {
+  /**
+   * Add to online regions.
+   * @param r
+   */
+  void addToOnlineRegions(final HRegion r);
 
-  @SuppressWarnings("unchecked")
-  SoftValue(K key, V value, ReferenceQueue queue) {
-    super(value, queue);
-    this.key = key;
-  }
-
-  public K getKey() {
-    return this.key;
-  }
-
-  public V getValue() {
-    return get();
-  }
-
-  public V setValue(V value) {
-    throw new RuntimeException("Not implemented");
-  }
+  /**
+   * This method removes HRegion corresponding to hri from the Map of onlineRegions.
+   *
+   * @param hri the HRegionInfo corresponding to the HRegion to-be-removed.
+   * @return the removed HRegion, or null if the HRegion was not in onlineRegions.
+   */
+  HRegion removeFromOnlineRegions(HRegionInfo hri);
 }
