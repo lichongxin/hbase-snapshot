@@ -57,7 +57,7 @@ public class SnapshotSentinel {
   SnapshotSentinel(final SnapshotDescriptor hsd, final HMaster master)
   throws IOException {
     this.maxRetries = master.getConfiguration().getInt(
-        "hbase.master.snapshot.maxretries", 3);
+        "hbase.master.snapshot.maxretries", 5);
     this.hsd = hsd;
     this.status = GlobalSnapshotStatus.INIT;
     this.activeServers = new HashSet<String>();
@@ -115,6 +115,7 @@ public class SnapshotSentinel {
 
   /**
    * Wait until the snapshot is finished. Timeout after maxRetries * 3000 ms.
+   * Increase maxRetries if snapshot always timeout.
    *
    * @throws IOException
    *           if timeout or snapshot is aborted or waiting is interrupted
