@@ -940,18 +940,6 @@ public class HBaseAdmin {
   }
 
   /**
-   * Restore the snapshot to a different table name.
-   *
-   * @param snapshotName name of the snapshot
-   * @param newTableName name of the new table
-   * @throws IOException if a remote or network exception occurs
-   */
-  public void restoreSnapshot(final byte[] snapshotName,
-      final byte[] newTableName) throws IOException {
-    // TODO
-  }
-
-  /**
    * Delete an existing snapshot.
    *
    * @param snapshotName name of the snapshot

@@ -151,7 +151,8 @@ public class RestoreSnapshot extends SnapshotOperation {
     for (String server : hlogs.keySet()) {
       Set<String> rsLogs = hlogs.get(server);
       for (String logName : rsLogs) {
-        Path logCurPos = getLogCurrentPosition(server, logName);
+        Path logCurPos = HLog.getLogCurrentPosition(server, logName,
+            master.getConfiguration());
         logfiles.add(fs.getFileStatus(logCurPos));
       }
     }

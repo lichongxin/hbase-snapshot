@@ -199,7 +199,7 @@ public class StoreFile {
     this.inMemory = inMemory;
     if (isReference(p)) {
       this.reference = Reference.read(fs, p);
-      this.referencePath = getReferredToFile(this.path, reference);
+      this.referencePath = getReferredToFile(this.path, reference, conf);
     }
     // ignore if the column family config says "no bloom filter"
     // even if there is one in the hfile.
@@ -255,16 +255,18 @@ public class StoreFile {
     return m.groupCount() > 1 && m.group(2) != null;
   }
 
-  /*
+  /**
    * Return path to the file referred to by a Reference.  Presumes a directory
    * hierarchy of <code>${hbase.rootdir}/tablename/regionname/familyname</code>.
    *
    * @param p Path to a Reference file.
    * @param reference the reference type
+   * @param configuration
    * @return Calculated path to parent region file.
-   * @throws IOException
+   * @throws IOException 
    */
-  static Path getReferredToFile(final Path p, final Reference reference) {
+  public static Path getReferredToFile(final Path p, final Reference reference,
+      final Configuration conf) {
     Matcher m = REF_NAME_PARSER.matcher(p.getName());
     if (m == null || !m.matches()) {
       LOG.warn("Failed match of store file name " + p.toString());
@@ -276,14 +278,13 @@ public class StoreFile {
     // another store file in another table
     if (reference.isEntireRange()) {
       // Other table name is suffix on the passed Reference file name
-      Configuration c = HBaseConfiguration.create();
-      String rootdir = c.get(HConstants.HBASE_DIR);
+      String root = conf.get(HConstants.HBASE_DIR);
       String otherTable = m.group(2);
       String srcFilename = m.group(1);
       String region = p.getParent().getParent().getName();
       String store = p.getParent().getName();
       srcFile = new Path(new Path(new Path(
-          new Path(rootdir, otherTable), region), store), srcFilename);
+          new Path(root, otherTable), region), store), srcFilename);
     }
     // this reference is created when region splitting and it refers to
     // top or bottom half of a store file in another region but the same

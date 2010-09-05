@@ -80,11 +80,11 @@ public class DeleteSnapshot extends SnapshotOperation {
 
       for (HColumnDescriptor family : info.getTableDesc().getColumnFamilies()) {
         Path familyDir = new Path(regionDir, family.getNameAsString());
+        Path srcFamilyDir = Store.getStoreHomedir(srcTableDir,
+            info.getEncodedName(), family.getName());
         FileStatus[] hfiles = fs.listStatus(familyDir);
         if (hfiles != null) {
           for (FileStatus refFile : hfiles) {
-            Path srcFamilyDir = Store.getStoreHomedir(srcTableDir,
-                info.getEncodedName(), family.getName());
             Path srcFile =
               new Path(srcFamilyDir, refFile.getPath().getName());
             // the qualifier is the path of the src file

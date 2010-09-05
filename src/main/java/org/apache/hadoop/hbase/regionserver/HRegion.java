@@ -400,16 +400,16 @@ public class HRegion implements HeapSize { // , Writable{
    * mangled regions.
    * @param fs
    * @param info region to be written out
-   * @param dstDir directory where the region info is written to
+   * @param regionDir region directory for this region info
    * @throws IOException e
    */
   public static void checkRegioninfoOnFilesystem(final FileSystem fs,
-      final HRegionInfo info, final Path dstDir) throws IOException {
+      final HRegionInfo info, final Path regionDir) throws IOException {
     // Name of this file has two leading and trailing underscores so it doesn't
     // clash w/ a store/family name.  There is possibility, but assumption is
     // that its slim (don't want to use control character in filename because
     //
-    Path regioninfo = new Path(dstDir, REGIONINFO_FILE);
+    Path regioninfo = new Path(regionDir, REGIONINFO_FILE);
     if (fs.exists(regioninfo) &&
         fs.getFileStatus(regioninfo).getLen() > 0) {
       return;

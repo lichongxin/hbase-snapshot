@@ -616,7 +616,7 @@ public class TestAdmin {
   }
 
   @Test
-  public void testRestoreSnapshot() throws IOException {
+  public void testRestoreSnapshot() throws Exception {
     HColumnDescriptor fam1 = new HColumnDescriptor("fam1");
     HColumnDescriptor fam2 = new HColumnDescriptor("fam2");
     HColumnDescriptor fam3 = new HColumnDescriptor("fam3");
@@ -635,6 +635,20 @@ public class TestAdmin {
       put.add(fam3.getName(), null, val);
       table.put(put);
     }
+    // flush the table so that the above data would be
+    // persistent on the file system
+    this.admin.flush(htd.getName());
+    // data below would be still in the commit edits log
+    for (int i = 10; i < 20; i++) {
+      byte[] val = Bytes.toBytes(i);
+      Put put = new Put(val);
+      put.add(fam1.getName(), null, val);
+      put.add(fam2.getName(), null, val);
+      put.add(fam3.getName(), null, val);
+      table.put(put);
+    }
+    // wait a while for the flush to finish
+    Thread.sleep(2000);
     byte[] snapshotName = Bytes.toBytes("testSnapshot2");
     this.admin.snapshot(snapshotName, htd.getName());
 
@@ -658,7 +672,7 @@ public class TestAdmin {
       assertEquals(val, Bytes.toInt(r.getValue(fam2.getName(), null)));
       assertEquals(val, Bytes.toInt(r.getValue(fam3.getName(), null)));
     }
-    assertEquals(10, rowCount);
+    assertEquals(20, rowCount);
     System.out.println("Row Count: " + rowCount);
   }
 

@@ -32,14 +32,13 @@ import org.apache.hadoop.fs.PathFilter;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.SnapshotDescriptor;
 import org.apache.hadoop.hbase.client.HTable;
-import org.apache.hadoop.hbase.regionserver.wal.HLog;
 import org.apache.hadoop.hbase.util.Bytes;
 
 /**
  * Abstract base class for snapshot operations.
  */
-abstract class SnapshotOperation {
-  private static final Pattern REGION_NAME_PATTERN = Pattern.compile("^(\\w+)$");
+public abstract class SnapshotOperation {
+  public static final Pattern REGION_NAME_PATTERN = Pattern.compile("^(\\w+)$");
 
   protected HMaster master;
   protected FileSystem fs;
@@ -120,33 +119,6 @@ abstract class SnapshotOperation {
   }
 
   protected abstract void processRegion(Path regionDir) throws IOException;
-
-  /**
-   * Get the current position of the log file. First find the log file in the
-   * original log directory. If it is not there, find it in the archive log
-   * directory.
-   *
-   * @param serverName
-   * @param logName
-   * @return path to the current position of the log
-   * @throws IOException
-   */
-  protected Path getLogCurrentPosition(String serverName, String logName)
-  throws IOException {
-    // original log directory
-    Path logDir =
-      new Path(master.getRootDir(), HLog.getHLogDirectoryName(serverName));
-    Path log = new Path(logDir, logName);
-    if (!fs.exists(log)) {
-      // this log has been arvhived, find it in the archive dir
-      log = new Path(master.getOldLogDir(), logName);
-      if (!fs.exists(log)) {
-        throw new IOException("Log file does not exist");
-      }
-    }
-
-    return log;
-  }
 
   /** @return snapshot descriptor for the current operation */
   public SnapshotDescriptor getSnapshotDescriptor() {

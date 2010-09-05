@@ -1856,6 +1856,139 @@ public class HLog implements Syncable {
     return this.actionListeners.remove(list);
   }
 
+  /**
+   * Move the split logs for this region to the corresponding region dir of another
+   * table. If a table is renamed, the split logs of this table should be moved.
+   *
+   * @param splits split recover edits logs for this region
+   * @param srcRegion region info of the src region
+   * @param dstRegion region info of the dst region
+   * @param fs File System
+   * @param conf Configuration
+   * @throws IOException
+   */
+  public static void moveSplitLogsForRegion(NavigableSet<Path> splits,
+      HRegionInfo srcRegion, HRegionInfo dstRegion, FileSystem fs,
+      Configuration conf) throws IOException {
+    Path rootDir = FSUtils.getRootDir(conf);
+    boolean sameRegion = Bytes.equals(srcRegion.getRegionName(),
+        dstRegion.getRegionName());
+    for (Path split : splits) {
+      if (sameRegion) {
+        // region name has not changed, so we just rename the split log here
+        Path dstRegionDir = HRegion.getRegionDir(rootDir, dstRegion);
+        Path recoverEditsDir = getRegionDirRecoveredEditsDir(dstRegionDir);
+        if (!fs.mkdirs(recoverEditsDir)) {
+          throw new IOException("Failed to create recover edits dir "
+              + recoverEditsDir);
+        }
+        Path newPath = new Path(recoverEditsDir, split.getName());
+        if (!fs.rename(split, newPath)) {
+          throw new IOException("Failed to rename split log " + split);
+        }
+      } else {
+        // otherwise we have to rewrite the edits logs,
+        // which could block for a long time
+        rewriteRecoverEditsLog(split, srcRegion, dstRegion, fs, conf);
+      }
+    }
+  }
+
+  /**
+   * Rewrite the split log so that the table name and region name of the log
+   * entries are updated according to the <code>dstRegion</code>. 
+   * This operation could be time consuming if the split log are large.
+   *
+   * @param editsLog the split commit log to be rewritten
+   * @param srcRegion region info of the src region
+   * @param dstRegion region info of the dst region
+   * @param fs File System
+   * @param conf Configuration
+   * @return path to the new log file
+   * @throws IOException
+   */
+  public static Path rewriteRecoverEditsLog(Path editsLog, HRegionInfo srcRegion,
+      HRegionInfo dstRegion, FileSystem fs, Configuration conf)
+  throws IOException {
+    long skippedEdits = 0;
+    long editsCount = 0;
+    HLog.Entry entry;
+    HLog.Reader reader = HLog.getReader(fs, editsLog, conf);
+
+    Path regionDir = HRegion.getRegionDir(FSUtils.getRootDir(conf), dstRegion);
+    Path recoverEditsDir = HLog.getRegionDirRecoveredEditsDir(regionDir);
+    // create the recover edits dir under the dst region dir
+    if (!fs.mkdirs(recoverEditsDir)) {
+      throw new IOException("Failed to create recover edit dir "
+          + recoverEditsDir);
+    }
+    // the rewritten recover edits log has the same name as the original log file
+    Path newPath = new Path(recoverEditsDir, editsLog.getName());
+    HLog.Writer writer = HLog.createWriter(fs, newPath, conf);
+    try {
+      byte[] srcTableName = srcRegion.getTableDesc().getName();
+      byte[] srcRegionName = srcRegion.getRegionName();
+      byte[] dstTableName = dstRegion.getTableDesc().getName();
+      byte[] dstRegionName = dstRegion.getRegionName();
+      while ((entry = reader.next()) != null) {
+        HLogKey key = entry.getKey();
+        WALEdit val = entry.getEdit();
+        if (Bytes.equals(key.getTablename(), srcTableName) &&
+            Bytes.equals(key.getRegionName(), srcRegionName)) {
+          // for edit of this region, rename the table name and region
+          // name for the log entry
+          HLogKey newKey = new HLogKey(dstRegionName, dstTableName,
+              key.getLogSeqNum(), key.getWriteTime());
+          HLog.Entry newEntry = new HLog.Entry(newKey, val);
+          writer.append(newEntry);
+          editsCount++;
+        } else {
+          // this edit does not belong to this region
+          skippedEdits++;
+        }
+      }
+      LOG.info("Rewritten " + editsCount + ", skipped " + skippedEdits);
+      return newPath;
+    } catch (IOException e) {
+      LOG.error("Failed to rewrite split log " + editsLog, e);
+      throw e;
+    } finally {
+      reader.close();
+      writer.close();
+    }
+  }
+
+  /**
+   * Get the current position of the log file. First find the log file in the
+   * original log directory. If it is not there, find it in the archive log
+   * directory.
+   *
+   * @param serverName region server name of the hlog
+   * @param logName log file name
+   * @param conf
+   * @return path to the current position of the log
+   * @throws IOException
+   */
+  public static Path getLogCurrentPosition(String serverName, String logName,
+      Configuration conf) throws IOException {
+    FileSystem fs = FileSystem.get(conf);
+    Path rootDir = FSUtils.getRootDir(conf);
+
+    // original log directory
+    Path logDir =
+      new Path(rootDir, HLog.getHLogDirectoryName(serverName));
+    Path log = new Path(logDir, logName);
+    if (!fs.exists(log)) {
+      // this log has been arvhived, find it in the archive dir
+      log = new Path(rootDir, logName);
+      if (!fs.exists(log)) {
+        throw new IOException("Log file does not exist");
+      }
+    }
+
+    return log;
+  }
+
   private static void usage() {
     System.err.println("Usage: java org.apache.hbase.HLog" +
         " {--dump <logfile>... | --split <logdir>...}");
